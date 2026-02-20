@@ -1,0 +1,890 @@
+import pygame
+import math
+import os
+import numpy as np
+from numba import njit
+import random
+
+# --- CONFIGURATION ---
+SCREEN_WIDTH = 800
+SCREEN_HEIGHT = 600
+HUD_HEIGHT = 100 
+HALF_HEIGHT = SCREEN_HEIGHT // 2
+GAME_TITLE = "HELL'S GRID: ALPHA EDITION"
+FPS = 60
+
+# Engine Constants
+TILE_SIZE = 64
+TEXTURE_SIZE = 128
+HALF_TEX = TEXTURE_SIZE // 2
+FOV = math.pi / 3
+HALF_FOV = FOV / 2
+NUM_RAYS = SCREEN_WIDTH // 2
+DELTA_ANGLE = FOV / NUM_RAYS
+DIST = NUM_RAYS / (2 * math.tan(HALF_FOV))
+SCALE = SCREEN_WIDTH // NUM_RAYS
+
+# Control Settings
+MOUSE_SENSITIVITY = 0.002
+MOUSE_PITCH_SENSITIVITY = 2.0 
+PLAYER_SPEED = 2.5 
+PLAYER_SIZE = 15
+
+# Player Stats
+MAX_HEALTH = 100
+MAX_AMMO = 50 
+player_health = MAX_HEALTH
+current_ammo = 30
+player_armor = 0 
+
+# Weapon Settings
+FIRE_RATE = 100       
+RECOIL_FORCE = 12     
+SHAKE_INTENSITY = 10  
+GUN_SCALE = 0.6       
+
+# Enemy Settings
+ENEMY_SPEED = 1.5 
+ENEMY_SIZE = 20
+ENEMY_HEALTH = 100
+ENEMY_DAMAGE = 0.5 
+
+# HUD Colors
+DOOM_RED = (230, 0, 0)    
+DOOM_GOLD = (255, 200, 100) 
+DOOM_BEVEL_LIGHT = (160, 160, 160)
+DOOM_BEVEL_DARK = (50, 50, 50)
+MENU_TEXT_COLOR = (150, 150, 150) # Grey for unselected
+MENU_TEXT_HOVER = (230, 0, 0)     # Red for selected
+
+# FACE ANIMATION SETTINGS
+FACE_IDLE_MIN = 60   
+FACE_IDLE_MAX = 180  
+FACE_LOOK_TIME = 30  
+
+# --- ASSETS PATHS ---
+BASE_PATH = r"D:\Project\Hell's Grid\assets"
+FONT_FOLDER = r"D:\Project\Hell's Grid\Font"
+FONT_FILENAME = "KingstoneDemoRegular-G3n5G.ttf"
+
+# Specific Menu Assets
+MENU_BG_FILENAME = "background.png"
+MENU_LOGO_FILENAME = "logo and mc.png"
+LOADING_SCREEN_FILENAME = "hell's grid main.png" 
+
+MAP_STRING = (
+    "1111111111111111"
+    "1000000040000001"
+    "1022222020222201"
+    "1020003000300201"
+    "1020111111100201"
+    "1020100000100201"
+    "1000400000400001"
+    "1022202222202201"
+    "1000000000000001"
+    "1111111111111111"
+)
+MAP_SIZE_X = 16
+MAP_SIZE_Y = 10
+
+# Initialize
+pygame.init()
+screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+pygame.display.set_caption(GAME_TITLE)
+# Don't trap mouse in menu
+pygame.mouse.set_visible(True) 
+pygame.event.set_grab(False)
+
+clock = pygame.time.Clock()
+
+# --- CUSTOM FONT LOADER ---
+def load_custom_font(size):
+    try:
+        path = os.path.join(FONT_FOLDER, FONT_FILENAME)
+        return pygame.font.Font(path, size)
+    except:
+        print(f"Warning: Could not load {FONT_FILENAME}. Using fallback.")
+        return pygame.font.SysFont('Arial', size, bold=True)
+
+# Load fonts
+font_menu_opt = load_custom_font(20)  # REDUCED FONT SIZE
+font_hud_big = load_custom_font(50)   
+font_hud_label = load_custom_font(16) 
+interact_font = load_custom_font(24)  
+fps_font = load_custom_font(18)       
+font_death = load_custom_font(100)    
+font_restart = load_custom_font(30)   
+
+# --- RESOURCES ---
+world_map = np.zeros((MAP_SIZE_X, MAP_SIZE_Y), dtype=np.int32)
+door_state = np.zeros((MAP_SIZE_X, MAP_SIZE_Y), dtype=np.float32) 
+door_lock = np.zeros((MAP_SIZE_X, MAP_SIZE_Y), dtype=np.int32)
+door_dir = np.zeros((MAP_SIZE_X, MAP_SIZE_Y), dtype=np.int32) 
+
+unlock_timers = {} 
+active_doors = {}
+open_timers = {}
+tracers = [] 
+bullet_holes = [] 
+enemies = [] 
+
+for j, char in enumerate(MAP_STRING):
+    x, y = j % MAP_SIZE_X, j // MAP_SIZE_X
+    val = int(char)
+    world_map[x, y] = val
+    door_dir[x, y] = 1 
+
+# --- SPAWN ENEMIES ---
+spawn_locations = [(6.5, 1.5), (12.5, 1.5), (3.5, 3.5), (7.5, 3.5), (12.5, 3.5), (7.5, 8.5)]
+for sx, sy in spawn_locations:
+    enemies.append({'x': sx * TILE_SIZE, 'y': sy * TILE_SIZE, 'health': ENEMY_HEALTH, 'state': 'chase', 'frame': 0, 'anim_timer': 0, 'hit_timer': 0})
+
+# Textures Loader
+def load_texture(filename):
+    path = os.path.join(BASE_PATH, filename)
+    if not os.path.exists(path): path = path.replace(".png", ".jpg")
+    try:
+        img = pygame.image.load(path).convert()
+        img = pygame.transform.scale(img, (TEXTURE_SIZE, TEXTURE_SIZE))
+        return pygame.surfarray.array3d(img)
+    except:
+        surf = pygame.Surface((TEXTURE_SIZE, TEXTURE_SIZE))
+        surf.fill((255, 0, 255))
+        return pygame.surfarray.array3d(surf)
+
+# --- ASSET LOADING (MENU & LOADING) ---
+menu_bg = None
+menu_logo = None
+loading_screen_img = None
+
+# 1. Background
+try:
+    bg_path = os.path.join(BASE_PATH, MENU_BG_FILENAME)
+    menu_bg = pygame.image.load(bg_path).convert()
+    menu_bg = pygame.transform.scale(menu_bg, (SCREEN_WIDTH, SCREEN_HEIGHT))
+except:
+    print(f"Error loading {MENU_BG_FILENAME}")
+    menu_bg = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+    menu_bg.fill((20, 0, 0)) 
+
+# 2. Logo and Character Overlay
+try:
+    logo_path = os.path.join(BASE_PATH, MENU_LOGO_FILENAME)
+    menu_logo = pygame.image.load(logo_path).convert_alpha()
+    # INCREASED SIZE: 115% of screen width to match vision
+    target_w = int(SCREEN_WIDTH * 1.15)
+    ratio = target_w / menu_logo.get_width()
+    target_h = int(menu_logo.get_height() * ratio)
+    menu_logo = pygame.transform.scale(menu_logo, (target_w, target_h))
+except:
+    print(f"Error loading {MENU_LOGO_FILENAME}")
+    menu_logo = pygame.Surface((400, 300))
+    menu_logo.fill((0, 0, 0))
+
+# 3. Loading Screen Image
+try:
+    load_path = os.path.join(BASE_PATH, LOADING_SCREEN_FILENAME)
+    loading_screen_img = pygame.image.load(load_path).convert()
+    loading_screen_img = pygame.transform.scale(loading_screen_img, (SCREEN_WIDTH, SCREEN_HEIGHT))
+except:
+    print(f"Error loading {LOADING_SCREEN_FILENAME}")
+    loading_screen_img = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+    loading_screen_img.fill((0, 0, 0))
+    # Draw simple text fallback
+    font_fallback = pygame.font.SysFont('Arial', 50)
+    txt = font_fallback.render("HELL'S GRID ALPHA", True, (200, 0, 0))
+    loading_screen_img.blit(txt, (SCREEN_WIDTH//2 - txt.get_width()//2, SCREEN_HEIGHT//2))
+
+# --- GAME ASSETS ---
+try:
+    gun_default = pygame.image.load(os.path.join(BASE_PATH, "gun_default.png")).convert_alpha()
+    gun_fire = pygame.image.load(os.path.join(BASE_PATH, "gun_fire.png")).convert_alpha()
+except:
+    gun_default = pygame.Surface((200, 200), pygame.SRCALPHA)
+    gun_fire = pygame.Surface((200, 200), pygame.SRCALPHA)
+
+w, h = gun_default.get_size()
+gun_default_scaled = pygame.transform.scale(gun_default, (int(w * GUN_SCALE), int(h * GUN_SCALE)))
+w, h = gun_fire.get_size()
+gun_fire_scaled = pygame.transform.scale(gun_fire, (int(w * GUN_SCALE), int(h * GUN_SCALE)))
+
+try:
+    hole_tex = pygame.image.load(os.path.join(BASE_PATH, "bullethole.png")).convert_alpha()
+    hole_tex = pygame.transform.scale(hole_tex, (30, 30))
+except:
+    hole_tex = pygame.Surface((20, 20))
+    hole_tex.fill((0, 0, 0))
+
+enemy_frames = []
+try:
+    e1 = pygame.image.load(os.path.join(BASE_PATH, "enemywalk1.png")).convert()
+    e1.set_colorkey((0, 0, 0)) 
+    e2 = pygame.image.load(os.path.join(BASE_PATH, "enemywalk2.png")).convert()
+    e2.set_colorkey((0, 0, 0)) 
+    enemy_frames.append(e1)
+    enemy_frames.append(e2)
+except Exception as e:
+    enemy_frames = [pygame.Surface((64, 128)), pygame.Surface((64, 128))]
+
+try:
+    blood_tex = pygame.image.load(os.path.join(BASE_PATH, "blood splatter.png")).convert_alpha()
+except Exception as e:
+    blood_tex = pygame.Surface((10, 10))
+
+# Face Sprites
+face_images = {}
+face_pos = (0, 0)
+face_data = [('center', 'face.png', (200, 150, 100)), ('left', 'face_left.png', (180, 130, 80)), ('right', 'face_right.png', (180, 130, 80))]
+for name, filename, fallback_color in face_data:
+    try:
+        img = pygame.image.load(os.path.join(BASE_PATH, filename)).convert_alpha()
+        ow, oh = img.get_size()
+        scale = min(64/ow, 64/oh)
+        nw, nh = int(ow * scale), int(oh * scale)
+        scaled_img = pygame.transform.scale(img, (nw, nh))
+        face_images[name] = scaled_img
+        if face_pos == (0,0): face_pos = ((64 - nw) // 2, (64 - nh) // 2)
+    except:
+        sq = pygame.Surface((64, 64))
+        face_images[name] = sq
+
+# HUD Background
+hud_bg_surface = pygame.Surface((SCREEN_WIDTH, HUD_HEIGHT))
+try:
+    tile_img = pygame.image.load(os.path.join(BASE_PATH, "floor2.png")).convert()
+    tile_w = tile_img.get_width()
+    tile_h = tile_img.get_height()
+    for x in range(0, SCREEN_WIDTH, tile_w):
+        for y in range(0, HUD_HEIGHT, tile_h):
+            hud_bg_surface.blit(tile_img, (x, y))
+    darkener = pygame.Surface((SCREEN_WIDTH, HUD_HEIGHT))
+    darkener.fill((30, 30, 30))
+    darkener.set_alpha(120) 
+    hud_bg_surface.blit(darkener, (0,0))
+except:
+    hud_bg_surface.fill((100, 100, 100))
+
+# Load Map Textures
+tex_list = []
+tex_list.append(np.zeros((TEXTURE_SIZE, TEXTURE_SIZE, 3))) 
+tex_list.append(load_texture("wall2.png"))                 
+tex_list.append(load_texture("wall1.png"))                 
+tex_list.append(load_texture("wall switch1.png"))          
+tex_list.append(load_texture("wall switch2.png"))          
+tex_list.append(load_texture("wall3.png"))                 
+
+wall_textures = np.array(tex_list, dtype=np.int32)
+floor_texture = np.ascontiguousarray(load_texture("floor1.png"), dtype=np.int32)
+ceil_texture = np.ascontiguousarray(load_texture("floor2.png"), dtype=np.int32)
+screen_buffer = np.zeros((SCREEN_WIDTH, SCREEN_HEIGHT, 3), dtype=np.int32)
+depth_buffer = np.zeros(SCREEN_WIDTH, dtype=np.float32)
+
+# --- RENDER KERNEL ---
+@njit(fastmath=True)
+def render_kernel(player_x, player_y, player_angle, pitch, world_map, door_state, door_lock, door_dir, wall_textures, floor_texture, ceil_texture, screen_buffer, depth_buffer):
+    horizon = int(HALF_HEIGHT + pitch)
+    cos_dir = math.cos(player_angle); sin_dir = math.sin(player_angle); plane_scale = 0.66
+    ray_dir_x0 = cos_dir - (-sin_dir * plane_scale); ray_dir_y0 = sin_dir - (cos_dir * plane_scale)
+    ray_dir_x1 = cos_dir + (-sin_dir * plane_scale); ray_dir_y1 = sin_dir + (cos_dir * plane_scale)
+
+    for y in range(0, SCREEN_HEIGHT):
+        p_y = y - horizon
+        if p_y == 0: continue
+        is_floor = p_y > 0
+        row_dist = (0.5 * SCREEN_HEIGHT) / abs(p_y) 
+        step_x = row_dist * (ray_dir_x1 - ray_dir_x0) / SCREEN_WIDTH
+        step_y = row_dist * (ray_dir_y1 - ray_dir_y0) / SCREEN_WIDTH
+        floor_x = player_x/TILE_SIZE + row_dist * ray_dir_x0
+        floor_y = player_y/TILE_SIZE + row_dist * ray_dir_y0
+        
+        for x in range(SCREEN_WIDTH):
+            tx = int(floor_x * TEXTURE_SIZE) & (TEXTURE_SIZE - 1)
+            ty = int(floor_y * TEXTURE_SIZE) & (TEXTURE_SIZE - 1)
+            shade = 1.0 / (1.0 + row_dist * 0.05); shade = min(1.0, shade)
+            dist_x = abs(tx - HALF_TEX) / HALF_TEX; dist_y = abs(ty - HALF_TEX) / HALF_TEX
+            edge_factor = max(dist_x, dist_y)
+            ao_mult = max(0.2, 1.0 - (edge_factor ** 4) * 0.8)
+            final_shade = shade * ao_mult
+
+            if is_floor:
+                fc = floor_texture[tx, ty]
+                screen_buffer[x, y, 0] = int(fc[0] * final_shade)
+                screen_buffer[x, y, 1] = int(fc[1] * final_shade * 0.85)
+                screen_buffer[x, y, 2] = int(fc[2] * final_shade * 0.85)
+            else:
+                cc = ceil_texture[tx, ty]
+                screen_buffer[x, y, 0] = int(cc[0] * final_shade)
+                screen_buffer[x, y, 1] = int(cc[1] * final_shade * 0.85)
+                screen_buffer[x, y, 2] = int(cc[2] * final_shade * 0.85)
+            
+            floor_x += step_x; floor_y += step_y
+
+    start_angle = player_angle - HALF_FOV
+    for ray in range(NUM_RAYS):
+        angle = start_angle + ray * DELTA_ANGLE
+        sin_a = math.sin(angle); cos_a = math.cos(angle)
+        map_x = int(player_x // TILE_SIZE); map_y = int(player_y // TILE_SIZE)
+        delta_dist_x = abs(1 / (cos_a + 1e-30)); delta_dist_y = abs(1 / (sin_a + 1e-30))
+        step_x = 1 if cos_a >= 0 else -1; step_y = 1 if sin_a >= 0 else -1
+        side_dist_x = (map_x + 1.0 - player_x / TILE_SIZE) * delta_dist_x if cos_a >= 0 else (player_x / TILE_SIZE - map_x) * delta_dist_x
+        side_dist_y = (map_y + 1.0 - player_y / TILE_SIZE) * delta_dist_y if sin_a >= 0 else (player_y / TILE_SIZE - map_y) * delta_dist_y
+
+        hit = False; side = 0; tex_id = 1; door_type = 0; door_pct = 0.0; wall_x = 0.0; final_dist = 0.0
+
+        while not hit:
+            if side_dist_x < side_dist_y:
+                side_dist_x += delta_dist_x; map_x += step_x; side = 0
+            else:
+                side_dist_y += delta_dist_y; map_y += step_y; side = 1
+            cell = world_map[map_x, map_y]
+            if cell > 0:
+                if cell == 1 or cell == 2:
+                    hit = True; tex_id = cell; door_type = 0
+                    if side == 0: final_dist = side_dist_x - delta_dist_x; wall_x = player_y + final_dist * sin_a * TILE_SIZE
+                    else: final_dist = side_dist_y - delta_dist_y; wall_x = player_x + final_dist * cos_a * TILE_SIZE
+                elif cell == 3:
+                    door_pct = door_state[map_x, map_y]
+                    if door_pct >= 0.98: continue
+                    if side == 0: dist = side_dist_x - delta_dist_x; wx = player_y + dist * sin_a * TILE_SIZE
+                    else: dist = side_dist_y - delta_dist_y; wx = player_x + dist * cos_a * TILE_SIZE
+                    wx -= math.floor(wx / TILE_SIZE) * TILE_SIZE
+                    if wx < (door_pct * TILE_SIZE): continue
+                    hit = True; final_dist = dist; door_type = 3; wall_x = wx
+                    tex_id = 3 if door_lock[map_x, map_y] == 0 else 4
+                elif cell == 4:
+                    p_loc_x = (player_x / TILE_SIZE) - map_x; p_loc_y = (player_y / TILE_SIZE) - map_y
+                    r_dx, r_dy = cos_a, sin_a; open_amt = door_state[map_x, map_y]; direction = door_dir[map_x, map_y]
+                    angle_rot = open_amt * (math.pi / 2.0)
+                    if direction == 1: x1, y1 = 0.0, 0.0; x2, y2 = math.sin(angle_rot), math.cos(angle_rot)
+                    else: x1, y1 = 0.0, 1.0; x2, y2 = math.sin(angle_rot), 1.0 - math.cos(angle_rot)
+                    v1x, v1y = p_loc_x - x1, p_loc_y - y1; v2x, v2y = x2 - x1, y2 - y1; v3x, v3y = -r_dy, r_dx
+                    dot = v2x * v3x + v2y * v3y
+                    if abs(dot) < 0.0001: continue
+                    t1 = (v2x * v1y - v2y * v1x) / dot; t2 = (v1x * v3x + v1y * v3y) / dot
+                    if t2 >= 0.0 and t2 <= 1.0 and t1 > 0.0:
+                        hit = True; final_dist = t1; tex_id = 5; door_type = 4; wall_x = t2 * TILE_SIZE
+                    else: continue
+
+        final_dist *= math.cos(angle - player_angle)
+        if final_dist < 0.05: final_dist = 0.05
+        
+        for s in range(SCALE):
+            if ray * SCALE + s < SCREEN_WIDTH: depth_buffer[ray * SCALE + s] = final_dist
+
+        line_height = int(SCREEN_HEIGHT / final_dist)
+        draw_start = -line_height // 2 + horizon; draw_end = line_height // 2 + horizon
+        draw_start_clamped = max(0, draw_start); draw_end_clamped = min(SCREEN_HEIGHT, draw_end)
+        
+        tex_x = 0
+        if door_type == 3 or door_type == 4: tex_x = int((wall_x / TILE_SIZE) * TEXTURE_SIZE)
+        else: wall_x -= math.floor(wall_x / TILE_SIZE) * TILE_SIZE; tex_x = int((wall_x / TILE_SIZE) * TEXTURE_SIZE)
+        if door_type == 0 and side == 0 and cos_a > 0: tex_x = TEXTURE_SIZE - tex_x - 1
+        if door_type == 0 and side == 1 and sin_a < 0: tex_x = TEXTURE_SIZE - tex_x - 1
+        tex_x = max(0, min(tex_x, TEXTURE_SIZE - 1))
+        
+        step = 1.0 * TEXTURE_SIZE / line_height
+        tex_pos = (draw_start_clamped - horizon + line_height / 2) * step
+        shade = 1.0 / (1.0 + final_dist * 0.05)
+        if door_type == 0 and side == 1: shade *= 0.7 
+        dist_x = abs(tex_x - HALF_TEX) / HALF_TEX
+        ao_mult = max(0.2, 1.0 - (dist_x ** 6) * 0.8)
+        final_shade = shade * ao_mult
+
+        for y in range(draw_start_clamped, draw_end_clamped):
+            tex_y = int(tex_pos) & (TEXTURE_SIZE - 1)
+            tex_pos += step
+            color = wall_textures[tex_id, tex_x, tex_y]
+            r = int(color[0] * final_shade); g = int(color[1] * final_shade * 0.85); b = int(color[2] * final_shade * 0.85)
+            for s in range(SCALE):
+                if ray * SCALE + s < SCREEN_WIDTH:
+                    screen_buffer[ray * SCALE + s, y, 0] = r
+                    screen_buffer[ray * SCALE + s, y, 1] = g
+                    screen_buffer[ray * SCALE + s, y, 2] = b
+
+# --- GAME STATE & VARIABLES ---
+player_x = 1.5 * TILE_SIZE; player_y = 1.5 * TILE_SIZE; player_angle = 0.0; player_pitch = 0.0 
+current_ammo = MAX_AMMO; player_health = MAX_HEALTH; player_armor = 0
+weapon_recoil = 0.0; weapon_bob = 0.0; screen_shake = 0.0; damage_flash = 0.0
+muzzle_flash_timer = 0; last_shot_time = 0; is_firing = False; is_reloading = False; reload_timer = 0
+player_facing_door = False 
+
+# States: "menu", "loading", "game", "game_over"
+game_state = "menu" 
+menu_selected_index = 0 
+menu_options = ["START GAME", "OPTIONS", "EXIT"]
+
+# Loading State Vars
+loading_phase = 0 # 0: Fade In, 1: Hold, 2: Fade Out
+loading_alpha = 0
+loading_timer = 0
+FADE_SPEED = 5 # Speed of fade transition
+
+current_face_state = 'center'; face_anim_timer = random.randint(FACE_IDLE_MIN, FACE_IDLE_MAX)
+
+def shoot_ray(p_x, p_y, p_angle, pitch):
+    sin_a = math.sin(p_angle); cos_a = math.cos(p_angle)
+    map_x = int(p_x // TILE_SIZE); map_y = int(p_y // TILE_SIZE)
+    delta_dist_x = abs(1 / (cos_a + 1e-30)); delta_dist_y = abs(1 / (sin_a + 1e-30))
+    step_x = 1 if cos_a >= 0 else -1; side_dist_x = (map_x + 1.0 - p_x / TILE_SIZE) * delta_dist_x if cos_a >= 0 else (p_x / TILE_SIZE - map_x) * delta_dist_x
+    step_y = 1 if sin_a >= 0 else -1; side_dist_y = (map_y + 1.0 - p_y / TILE_SIZE) * delta_dist_y if sin_a >= 0 else (p_y / TILE_SIZE - map_y) * delta_dist_y
+    hit = False; side = 0; hit_x, hit_y = 0, 0; hit_dist = 0.0
+    while not hit:
+        if side_dist_x < side_dist_y: side_dist_x += delta_dist_x; map_x += step_x; side = 0
+        else: side_dist_y += delta_dist_y; map_y += step_y; side = 1
+        if map_x < 0 or map_x >= MAP_SIZE_X or map_y < 0 or map_y >= MAP_SIZE_Y: return None 
+        if world_map[map_x, map_y] > 0:
+            hit = True
+            if side == 0: hit_dist = side_dist_x - delta_dist_x
+            else: hit_dist = side_dist_y - delta_dist_y
+            hit_x = p_x + cos_a * hit_dist * TILE_SIZE; hit_y = p_y + sin_a * hit_dist * TILE_SIZE
+            hit_height = 0.5 + (pitch * hit_dist / SCREEN_HEIGHT)
+            if hit_height < 0.0 or hit_height > 1.0: return None
+            return {'x': hit_x, 'y': hit_y, 'z': hit_height, 'dist': hit_dist, 'time': pygame.time.get_ticks()}
+    return None
+
+def draw_bullet_holes(surface, player_x, player_y, player_angle, pitch, depth_buffer):
+    current_time = pygame.time.get_ticks()
+    to_remove = []
+    horizon = HALF_HEIGHT + pitch
+    p_cos = math.cos(player_angle); p_sin = math.sin(player_angle)
+    for i, hole in enumerate(bullet_holes):
+        if current_time - hole['time'] > 5000: to_remove.append(i); continue
+        dx = hole['x'] - player_x; dy = hole['y'] - player_y
+        depth = dx * p_cos + dy * p_sin; lateral = dx * p_sin - dy * p_cos
+        if depth <= 0.1: continue
+        scale_x = (SCREEN_WIDTH / 2) / math.tan(HALF_FOV) 
+        screen_x = int((SCREEN_WIDTH / 2) + (lateral / depth) * scale_x)
+        hit_h = hole['z']
+        screen_y = int(horizon + (0.5 - hit_h) * (SCREEN_HEIGHT / depth))
+        if 0 <= screen_x < SCREEN_WIDTH:
+            dist_tiles = depth / TILE_SIZE
+            if dist_tiles < depth_buffer[screen_x] + 0.5:
+                size = int(800 / depth) 
+                if size < 2: continue 
+                if size > 60: size = 60
+                scaled_hole = pygame.transform.scale(hole_tex, (size, size))
+                rect = scaled_hole.get_rect(center=(screen_x, screen_y))
+                surface.blit(scaled_hole, rect)
+    for i in reversed(to_remove): bullet_holes.pop(i)
+
+def update_enemies():
+    global player_x, player_y, player_health, game_state, damage_flash, screen_shake, player_pitch
+    if game_state != "game": return
+    for enemy in enemies:
+        if enemy['health'] <= 0: enemy['state'] = 'dead'; continue
+        enemy['anim_timer'] += 1
+        if enemy['anim_timer'] > 20: enemy['anim_timer'] = 0; enemy['frame'] = 1 - enemy['frame']
+        dx = player_x - enemy['x']; dy = player_y - enemy['y']
+        dist = math.hypot(dx, dy)
+        if dist > 40: 
+            dx /= dist; dy /= dist
+            check_x = enemy['x'] + dx * ENEMY_SPEED
+            map_x = int(check_x // TILE_SIZE); map_y = int(enemy['y'] // TILE_SIZE)
+            if world_map[map_x, map_y] == 0: enemy['x'] = check_x
+            check_y = enemy['y'] + dy * ENEMY_SPEED
+            map_x = int(enemy['x'] // TILE_SIZE); map_y = int(check_y // TILE_SIZE)
+            if world_map[map_x, map_y] == 0: enemy['y'] = check_y
+        elif dist < 50:
+            player_health -= ENEMY_DAMAGE 
+            damage_flash = 120; screen_shake = 15; player_pitch -= 5 
+            if player_health <= 0: player_health = 0; game_state = "game_over"
+
+def draw_enemies(surface, player_x, player_y, player_angle, pitch, depth_buffer):
+    horizon = HALF_HEIGHT + pitch
+    p_cos = math.cos(player_angle); p_sin = math.sin(player_angle)
+    sorted_enemies = []
+    for enemy in enemies:
+        if enemy['health'] <= 0: continue 
+        dx = enemy['x'] - player_x; dy = enemy['y'] - player_y
+        depth = dx * p_cos + dy * p_sin
+        sorted_enemies.append((depth, enemy))
+    sorted_enemies.sort(key=lambda x: x[0], reverse=True)
+    for depth, enemy in sorted_enemies:
+        dx = enemy['x'] - player_x; dy = enemy['y'] - player_y
+        lateral = dy * p_cos - dx * p_sin 
+        if depth <= 10.0: continue 
+        depth_tiles = depth / TILE_SIZE
+        if depth_tiles < 0.1: depth_tiles = 0.1 
+        scale = SCREEN_HEIGHT / depth_tiles
+        max_height = SCREEN_HEIGHT * 1.5 
+        if scale > max_height: scale = max_height
+        tex = enemy_frames[enemy['frame']]
+        original_w = tex.get_width(); original_h = tex.get_height()
+        if original_h == 0: original_h = 1
+        ratio = original_w / original_h
+        sprite_height = int(scale * 0.7); sprite_width = int(sprite_height * ratio) 
+        if sprite_height <= 0 or sprite_width <= 0: continue
+        scale_x = (SCREEN_WIDTH / 2) / math.tan(HALF_FOV) 
+        screen_x = int((SCREEN_WIDTH / 2) + (lateral / depth) * scale_x)
+        base_y = int(horizon + (0.5 * SCREEN_HEIGHT / depth_tiles))
+        screen_y = base_y - sprite_height
+        if 0 <= screen_x < SCREEN_WIDTH:
+            if depth_tiles < depth_buffer[screen_x] + 0.3:
+                scaled_tex = pygame.transform.scale(tex, (sprite_width, sprite_height))
+                draw_x = screen_x - sprite_width // 2
+                surface.blit(scaled_tex, (draw_x, screen_y))
+                if enemy['hit_timer'] > 0:
+                    b_width = int(sprite_width * 0.6); b_height = int(sprite_height * 0.6)
+                    if b_width > 250: b_width = 250
+                    if b_height > 250: b_height = 250
+                    if b_width > 0 and b_height > 0:
+                        scaled_blood = pygame.transform.scale(blood_tex, (b_width, b_height))
+                        bx = draw_x + (sprite_width // 2) - (b_width // 2)
+                        by = screen_y + (sprite_height // 2) - (b_height // 2)
+                        surface.blit(scaled_blood, (bx, by))
+                    enemy['hit_timer'] -= 1
+
+def start_loading():
+    global game_state, loading_phase, loading_alpha, loading_timer
+    game_state = "loading"
+    loading_phase = 0 # Fade In
+    loading_alpha = 0
+    loading_timer = 0
+
+def reset_game():
+    global player_health, current_ammo, player_x, player_y, game_state, enemies, current_face_state, damage_flash
+    player_health = MAX_HEALTH; current_ammo = MAX_AMMO
+    player_x = 1.5 * TILE_SIZE; player_y = 1.5 * TILE_SIZE
+    game_state = "game"; current_face_state = 'center'; damage_flash = 0
+    pygame.mouse.set_visible(False); pygame.event.set_grab(True)
+    enemies = []
+    for sx, sy in spawn_locations:
+        enemies.append({'x': sx * TILE_SIZE, 'y': sy * TILE_SIZE, 'health': ENEMY_HEALTH, 'state': 'chase', 'frame': 0, 'anim_timer': 0, 'hit_timer': 0})
+
+def update_face_animation():
+    global current_face_state, face_anim_timer
+    face_anim_timer -= 1
+    if face_anim_timer <= 0:
+        if current_face_state == 'center':
+            current_face_state = random.choice(['left', 'right'])
+            face_anim_timer = FACE_LOOK_TIME
+        else:
+            current_face_state = 'center'
+            face_anim_timer = random.randint(FACE_IDLE_MIN, FACE_IDLE_MAX)
+
+def check_facing():
+    global player_facing_door
+    check = TILE_SIZE * 1.5
+    gx = int((player_x + math.cos(player_angle) * check) / TILE_SIZE)
+    gy = int((player_y + math.sin(player_angle) * check) / TILE_SIZE)
+    if 0 <= gx < MAP_SIZE_X and 0 <= gy < MAP_SIZE_Y:
+        c = world_map[gx, gy]
+        if (c == 3 or c == 4) and door_state[gx, gy] < 0.1: player_facing_door = True
+        else: player_facing_door = False
+    else: player_facing_door = False
+
+def interact():
+    global is_reloading, reload_timer
+    if game_state != "game": return
+    check = TILE_SIZE * 1.5
+    fx = player_x + math.cos(player_angle) * check
+    fy = player_y + math.sin(player_angle) * check
+    gx, gy = int(fx / TILE_SIZE), int(fy / TILE_SIZE)
+    if 0 <= gx < MAP_SIZE_X and 0 <= gy < MAP_SIZE_Y:
+        cell = world_map[gx, gy]
+        if cell == 3:
+            if door_lock[gx, gy] == 0: door_lock[gx, gy] = 1; unlock_timers[(gx, gy)] = pygame.time.get_ticks() + 1000 
+        elif cell == 4:
+            if door_state[gx, gy] < 0.1:
+                tile_center_y = (gy + 0.5) * TILE_SIZE
+                door_dir[gx, gy] = 1 if player_y > tile_center_y else -1
+                active_doors[(gx, gy)] = 'opening'
+
+def reload_weapon():
+    global is_reloading, reload_timer
+    if game_state != "game": return
+    if current_ammo < MAX_AMMO and not is_reloading: is_reloading = True; reload_timer = 60 
+
+def fire_weapon():
+    global current_ammo, weapon_recoil, screen_shake, muzzle_flash_timer, is_firing, player_pitch
+    if game_state != "game": return
+    if is_reloading or current_ammo <= 0: return 
+    current_ammo -= 1; weapon_recoil = RECOIL_FORCE; screen_shake = 10.0; muzzle_flash_timer = 5; is_firing = True; player_pitch += 10.0 
+    end_x = SCREEN_WIDTH // 2 + random.randint(-10, 10); end_y = HALF_HEIGHT + random.randint(-10, 10)
+    tracers.append({'x': end_x, 'y': end_y, 'life': 5}) 
+    hit_enemy = False; p_cos = math.cos(player_angle); p_sin = math.sin(player_angle)
+    for enemy in enemies:
+        if enemy['health'] <= 0: continue
+        dx = enemy['x'] - player_x; dy = enemy['y'] - player_y
+        depth = dx * p_cos + dy * p_sin; lateral = dx * p_sin - dy * p_cos
+        if depth > 0 and abs(lateral) < 30: 
+            enemy['health'] -= 20; enemy['hit_timer'] = 5; hit_enemy = True; break 
+    if not hit_enemy:
+        hit = shoot_ray(player_x, player_y, player_angle, player_pitch)
+        if hit: bullet_holes.append(hit)
+
+def update_doors():
+    now = pygame.time.get_ticks(); ready = []
+    for k, time in unlock_timers.items():
+        if now >= time: active_doors[k] = 'opening'; ready.append(k)
+    for k in ready: del unlock_timers[k]
+    finished_anim = []
+    for (gx, gy), state in active_doors.items():
+        if state == 'opening':
+            door_state[gx, gy] += 0.03
+            if door_state[gx, gy] >= 1.0: door_state[gx, gy] = 1.0; active_doors[(gx, gy)] = 'open'; open_timers[(gx, gy)] = now + 5000
+        elif state == 'closing':
+            door_state[gx, gy] -= 0.03
+            if door_state[gx, gy] <= 0.0: door_state[gx, gy] = 0.0; finished_anim.append((gx, gy)); 
+            if world_map[gx, gy] == 3: door_lock[gx, gy] = 0
+    for k in finished_anim: del active_doors[k]
+    closing_soon = []
+    for (gx, gy), close_time in open_timers.items():
+        dist = math.sqrt((player_x - (gx+0.5)*TILE_SIZE)**2 + (player_y - (gy+0.5)*TILE_SIZE)**2)
+        if now >= close_time and dist > TILE_SIZE: active_doors[(gx, gy)] = 'closing'; closing_soon.append((gx, gy))
+    for k in closing_soon: del open_timers[k]
+
+def draw_crosshair(surface):
+    cx, cy = SCREEN_WIDTH // 2, HALF_HEIGHT
+    gap = 6
+    length = 12
+    thickness = 2
+    color = (200, 200, 200)
+    pygame.draw.line(surface, color, (cx, cy - gap - length), (cx, cy - gap), thickness)
+    pygame.draw.line(surface, color, (cx, cy + gap), (cx, cy + gap + length), thickness)
+    pygame.draw.line(surface, color, (cx - gap - length, cy), (cx - gap, cy), thickness)
+    pygame.draw.line(surface, color, (cx + gap, cy), (cx + gap + length, cy), thickness) 
+
+def draw_hud(surface):
+    hud_y = SCREEN_HEIGHT - HUD_HEIGHT
+    surface.blit(hud_bg_surface, (0, hud_y))
+    pygame.draw.line(surface, DOOM_BEVEL_LIGHT, (0, hud_y), (SCREEN_WIDTH, hud_y), 3)
+    
+    def draw_inset_box(x, w, label, value, is_percentage=False):
+        rect = pygame.Rect(x, hud_y + 15, w, HUD_HEIGHT - 30)
+        pygame.draw.rect(surface, DOOM_BEVEL_DARK, rect) 
+        pygame.draw.rect(surface, DOOM_BEVEL_LIGHT, rect, 2)
+        lbl_surf = font_hud_label.render(label, True, DOOM_GOLD)
+        surface.blit(lbl_surf, (rect.x + (rect.width - lbl_surf.get_width())//2, rect.y + 4))
+        txt = f"{int(value)}%" if is_percentage else f"{int(value)}"
+        val_surf = font_hud_big.render(txt, True, DOOM_RED)
+        surface.blit(val_surf, (rect.x + (rect.width - val_surf.get_width())//2, rect.y + 18))
+
+    draw_inset_box(20, 100, "AMMO", current_ammo)
+    draw_inset_box(140, 120, "HEALTH", int(player_health), True)
+    
+    face_rect = pygame.Rect(SCREEN_WIDTH//2 - 40, hud_y + 10, 80, 80)
+    pygame.draw.rect(surface, (0,0,0), face_rect)
+    surface.blit(face_images[current_face_state], (face_rect.x + face_pos[0], face_rect.y + face_pos[1])) 
+    pygame.draw.rect(surface, DOOM_BEVEL_LIGHT, face_rect, 3)
+
+    draw_inset_box(SCREEN_WIDTH - 260, 120, "ARMOR", int(player_armor), True)
+    
+    panel_rect = pygame.Rect(SCREEN_WIDTH - 120, hud_y + 15, 100, HUD_HEIGHT - 30)
+    pygame.draw.rect(surface, DOOM_BEVEL_DARK, panel_rect)
+    for i in range(4):
+        y_off = panel_rect.y + 10 + (i * 12)
+        pygame.draw.line(surface, (100, 100, 100), (panel_rect.x + 5, y_off), (panel_rect.x + 90, y_off), 2)
+
+# --- MENU DRAW FUNCTION ---
+def draw_menu(surface):
+    surface.blit(menu_bg, (0, 0))
+    bar_height = 80
+    bar_y = SCREEN_HEIGHT - bar_height
+    pygame.draw.rect(surface, (0, 0, 0), (0, bar_y, SCREEN_WIDTH, bar_height))
+    logo_x = (SCREEN_WIDTH - menu_logo.get_width()) // 2
+    logo_y = bar_y - menu_logo.get_height()
+    surface.blit(menu_logo, (logo_x, logo_y))
+    
+    y_pos = bar_y + (bar_height // 2) - 15 
+    for i, option_text in enumerate(menu_options):
+        color = MENU_TEXT_HOVER if i == menu_selected_index else MENU_TEXT_COLOR
+        text_surf = font_menu_opt.render(option_text, True, color)
+        if i == 0: x_pos = SCREEN_WIDTH * 0.25 - (text_surf.get_width() // 2)
+        elif i == 1: x_pos = SCREEN_WIDTH * 0.5 - (text_surf.get_width() // 2)
+        else: x_pos = SCREEN_WIDTH * 0.75 - (text_surf.get_width() // 2)
+        surface.blit(text_surf, (x_pos, y_pos))
+
+# --- MAIN LOOP ---
+running = True
+print("Compiling Engine... (Ready in 3s)")
+pygame.mouse.get_rel()
+
+while running:
+    current_time = pygame.time.get_ticks()
+    mouse_pos = pygame.mouse.get_pos()
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT: running = False
+        
+        if game_state == "menu":
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_LEFT:
+                    menu_selected_index = (menu_selected_index - 1) % 3
+                elif event.key == pygame.K_RIGHT:
+                    menu_selected_index = (menu_selected_index + 1) % 3
+                elif event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
+                    if menu_selected_index == 0: start_loading() 
+                    elif menu_selected_index == 2: running = False 
+                elif event.key == pygame.K_ESCAPE:
+                    running = False
+            
+            if event.type == pygame.MOUSEMOTION:
+                bar_height = 80
+                y_pos = SCREEN_HEIGHT - bar_height + (bar_height // 2) - 15
+                for i, txt in enumerate(menu_options):
+                    t_surf = font_menu_opt.render(txt, True, (255,255,255))
+                    if i == 0: x = SCREEN_WIDTH * 0.25 - t_surf.get_width()//2
+                    elif i == 1: x = SCREEN_WIDTH * 0.5 - t_surf.get_width()//2
+                    else: x = SCREEN_WIDTH * 0.75 - t_surf.get_width()//2
+                    rect = pygame.Rect(x, y_pos, t_surf.get_width(), t_surf.get_height())
+                    if rect.collidepoint(mouse_pos):
+                        menu_selected_index = i
+            
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1: 
+                    if menu_selected_index == 0: start_loading()
+                    elif menu_selected_index == 2: running = False
+
+        elif game_state == "game":
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_e: interact()
+                if event.key == pygame.K_r: reload_weapon()
+                if event.key == pygame.K_ESCAPE: 
+                    game_state = "menu"
+                    pygame.mouse.set_visible(True)
+                    pygame.event.set_grab(False)
+        
+        elif game_state == "game_over":
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_SPACE: reset_game()
+                if event.key == pygame.K_ESCAPE: running = False
+
+    # DRAW BASED ON STATE
+    if game_state == "menu":
+        draw_menu(screen)
+    
+    elif game_state == "loading":
+        screen.fill((0, 0, 0))
+        current_alpha = int(loading_alpha)
+        if current_alpha < 0: current_alpha = 0
+        if current_alpha > 255: current_alpha = 255
+        loading_screen_img.set_alpha(current_alpha)
+        screen.blit(loading_screen_img, (0, 0))
+        
+        if loading_phase == 0: # Fade In
+            loading_alpha += FADE_SPEED
+            if loading_alpha >= 255:
+                loading_alpha = 255
+                loading_phase = 1
+                loading_timer = pygame.time.get_ticks()
+        elif loading_phase == 1: # Hold
+            if pygame.time.get_ticks() - loading_timer > 2000: # 2 seconds
+                loading_phase = 2
+        elif loading_phase == 2: # Fade Out
+            loading_alpha -= FADE_SPEED
+            if loading_alpha <= 0:
+                loading_alpha = 0
+                reset_game()
+
+    elif game_state == "game" or game_state == "game_over":
+        if game_state == "game":
+            update_face_animation()
+            mouse_buttons = pygame.mouse.get_pressed()
+            if mouse_buttons[0] and current_ammo > 0 and current_time - last_shot_time > FIRE_RATE:
+                fire_weapon(); last_shot_time = current_time
+            
+            mouse_dx, mouse_dy = pygame.mouse.get_rel()
+            player_angle += mouse_dx * MOUSE_SENSITIVITY
+            player_pitch -= mouse_dy * MOUSE_PITCH_SENSITIVITY
+            max_pitch = HALF_HEIGHT 
+            if player_pitch > max_pitch: player_pitch = max_pitch
+            if player_pitch < -max_pitch: player_pitch = -max_pitch
+            
+            keys = pygame.key.get_pressed()
+            dx, dy = 0, 0
+            if keys[pygame.K_w]: dx = math.cos(player_angle) * PLAYER_SPEED; dy = math.sin(player_angle) * PLAYER_SPEED
+            if keys[pygame.K_s]: dx = -math.cos(player_angle) * PLAYER_SPEED; dy = -math.sin(player_angle) * PLAYER_SPEED
+            if keys[pygame.K_a]: dx = math.cos(player_angle - math.pi/2) * (PLAYER_SPEED*0.7); dy = math.sin(player_angle - math.pi/2) * (PLAYER_SPEED*0.7)
+            if keys[pygame.K_d]: dx = math.cos(player_angle + math.pi/2) * (PLAYER_SPEED*0.7); dy = math.sin(player_angle + math.pi/2) * (PLAYER_SPEED*0.7)
+            
+            is_moving = (dx != 0 or dy != 0)
+            
+            def is_solid(gx, gy):
+                cell = world_map[gx, gy]
+                if cell == 0: return False
+                if (cell == 3 or cell == 4) and door_state[gx, gy] > 0.8: return False
+                return True
+
+            off_x = PLAYER_SIZE if dx > 0 else -PLAYER_SIZE
+            if not is_solid(int((player_x + dx + off_x)/TILE_SIZE), int(player_y/TILE_SIZE)): player_x += dx
+            off_y = PLAYER_SIZE if dy > 0 else -PLAYER_SIZE
+            if not is_solid(int(player_x/TILE_SIZE), int((player_y + dy + off_y)/TILE_SIZE)): player_y += dy
+
+            check_facing(); update_doors(); update_enemies()
+            
+            reload_offset = 0
+            if is_reloading:
+                reload_timer -= 1
+                if reload_timer <= 0: is_reloading = False; current_ammo = MAX_AMMO
+                t = 1.0 - (reload_timer / 60); reload_offset = math.sin(t * math.pi) * 200
+            
+            if damage_flash > 0: damage_flash -= 5; 
+            if damage_flash < 0: damage_flash = 0
+
+        render_kernel(player_x, player_y, player_angle, player_pitch, world_map, door_state, door_lock, door_dir, wall_textures, floor_texture, ceil_texture, screen_buffer, depth_buffer)
+        surf = pygame.surfarray.make_surface(screen_buffer)
+        draw_bullet_holes(surf, player_x, player_y, player_angle, player_pitch, depth_buffer)
+        draw_enemies(surf, player_x, player_y, player_angle, player_pitch, depth_buffer)
+        
+        shake_x = 0; shake_y = 0
+        if screen_shake > 0:
+            shake_x = random.randint(-int(screen_shake), int(screen_shake))
+            shake_y = random.randint(-int(screen_shake), int(screen_shake))
+            screen_shake *= 0.9; 
+            if screen_shake < 1.0: screen_shake = 0
+        screen.blit(surf, (shake_x, shake_y))
+        
+        if damage_flash > 0:
+            flash_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+            flash_surf.fill((255, 0, 0)); flash_surf.set_alpha(int(damage_flash))
+            screen.blit(flash_surf, (0, 0))
+        
+        weapon_bob = 0.0
+        if game_state == "game" and is_moving: weapon_bob += 0.2
+        bob_x = math.cos(weapon_bob) * 10; bob_y = abs(math.sin(weapon_bob)) * 10
+        if weapon_recoil > 0: weapon_recoil -= 2 
+        
+        current_gun_sprite = gun_default_scaled
+        if muzzle_flash_timer > 0:
+            current_gun_sprite = gun_fire_scaled; muzzle_flash_timer -= 1
+        else:
+            current_gun_sprite = gun_default_scaled
+
+        gun_x = (SCREEN_WIDTH // 2) - (current_gun_sprite.get_width() // 2) + 180 + bob_x + shake_x
+        gun_y = SCREEN_HEIGHT - current_gun_sprite.get_height() + 40 + bob_y + weapon_recoil + shake_y + reload_offset
+        screen.blit(current_gun_sprite, (gun_x, gun_y))
+        
+        if not is_reloading and game_state == "game":
+            barrel_x = gun_x + (current_gun_sprite.get_width() // 2)
+            barrel_y = gun_y + int(current_gun_sprite.get_height() * 0.4) 
+            active_tracers = []
+            for t in tracers:
+                start_pos = (barrel_x, barrel_y)
+                end_pos = (t['x'] + shake_x, t['y'] + shake_y) 
+                pygame.draw.line(screen, (255, 255, 0), start_pos, end_pos, 2)
+                t['life'] -= 1
+                if t['life'] > 0: active_tracers.append(t)
+            tracers = active_tracers
+
+        draw_crosshair(screen)
+        draw_hud(screen)
+
+        if game_state == "game_over":
+            draw_game_over(screen)
+        else:
+            fps = fps_font.render(f"FPS: {int(clock.get_fps())}", True, (255, 255, 0))
+            screen.blit(fps, (10, 10)) 
+            if current_ammo == 0:
+                reload_txt = interact_font.render("PRESS R TO RELOAD", True, (255, 0, 0))
+                rect = reload_txt.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT//2 - 50))
+                screen.blit(reload_txt, rect)
+            if player_facing_door:
+                txt = interact_font.render("Press E to Open", True, (255, 255, 255))
+                rect = txt.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT - 120))
+                screen.blit(txt, rect)
+
+    pygame.display.flip()
+    clock.tick(FPS)
+
+pygame.quit()
