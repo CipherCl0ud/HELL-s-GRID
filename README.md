@@ -3,6 +3,7 @@
 > *A retro-style raycasting FPS engine built from scratch in Python.*
 
 **Hell's Grid** is a modular 2.5D First-Person Shooter engine inspired by classics like *Wolfenstein 3D* and *Doom*. Built using **Python** and **Pygame**, it utilizes **Numba** for high-performance just-in-time (JIT) compilation, allowing for smooth framerates even with complex texture mapping and shading calculations.
+![Hell's Grid Gameplay](background.png)
 
 ## 🕹️ Features
 
