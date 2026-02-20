@@ -8,6 +8,7 @@ import sys
 from settings import *
 import assets
 import raycaster
+import levels  # <--- NEW IMPORT ADDED HERE
 
 class Game:
     def __init__(self):
@@ -41,20 +42,21 @@ class Game:
         self.depth_buffer = np.zeros(SCREEN_WIDTH, dtype=np.float32)
 
     def init_map(self):
-        self.world_map = np.zeros((MAP_SIZE_X, MAP_SIZE_Y), dtype=np.int32)
-        self.door_state = np.zeros((MAP_SIZE_X, MAP_SIZE_Y), dtype=np.float32) 
-        self.door_lock = np.zeros((MAP_SIZE_X, MAP_SIZE_Y), dtype=np.int32)
-        self.door_dir = np.zeros((MAP_SIZE_X, MAP_SIZE_Y), dtype=np.int32) 
+        # Uses levels.MAP_SIZE_X and levels.MAP_SIZE_Y
+        self.world_map = np.zeros((levels.MAP_SIZE_X, levels.MAP_SIZE_Y), dtype=np.int32)
+        self.door_state = np.zeros((levels.MAP_SIZE_X, levels.MAP_SIZE_Y), dtype=np.float32) 
+        self.door_lock = np.zeros((levels.MAP_SIZE_X, levels.MAP_SIZE_Y), dtype=np.int32)
+        self.door_dir = np.zeros((levels.MAP_SIZE_X, levels.MAP_SIZE_Y), dtype=np.int32) 
         
-        for j, char in enumerate(MAP_STRING):
-            x, y = j % MAP_SIZE_X, j // MAP_SIZE_X
+        for j, char in enumerate(levels.MAP_STRING):
+            x, y = j % levels.MAP_SIZE_X, j // levels.MAP_SIZE_X
             val = int(char)
             self.world_map[x, y] = val
             
             # --- AUTO-DETECT DOOR ORIENTATION ---
             if val == 4:
                 left = self.world_map[x-1, y] if x > 0 else 0
-                right = self.world_map[x+1, y] if x < MAP_SIZE_X-1 else 0
+                right = self.world_map[x+1, y] if x < levels.MAP_SIZE_X-1 else 0
                 
                 # If walls are Left/Right, it's a Vertical Corridor -> Horizontal Door (1)
                 if left != 0 and right != 0:
@@ -90,9 +92,9 @@ class Game:
         self.tracers = []
         self.bullet_holes = []
         
-        # Spawn Enemies
+        # Spawn Enemies from levels file
         self.enemies = []
-        for sx, sy in SPAWN_LOCATIONS:
+        for sx, sy in levels.SPAWN_LOCATIONS:
             self.enemies.append({
                 'x': sx * TILE_SIZE, 'y': sy * TILE_SIZE,
                 'health': ENEMY_HEALTH, 'state': 'chase',
@@ -209,8 +211,8 @@ class Game:
             self.weapon_bob = 0.0
 
     def is_solid(self, x, y):
-        # 1. Bounds Check
-        if x < 0 or x >= MAP_SIZE_X or y < 0 or y >= MAP_SIZE_Y:
+        # 1. Bounds Check uses levels.MAP_SIZE
+        if x < 0 or x >= levels.MAP_SIZE_X or y < 0 or y >= levels.MAP_SIZE_Y:
             return True
         
         # 2. Wall Check
@@ -228,7 +230,7 @@ class Game:
         check = TILE_SIZE * 1.5
         gx = int((self.player_x + math.cos(self.player_angle) * check) / TILE_SIZE)
         gy = int((self.player_y + math.sin(self.player_angle) * check) / TILE_SIZE)
-        if 0 <= gx < MAP_SIZE_X and 0 <= gy < MAP_SIZE_Y:
+        if 0 <= gx < levels.MAP_SIZE_X and 0 <= gy < levels.MAP_SIZE_Y:
             c = self.world_map[gx, gy]
             if (c == 3 or c == 4) and self.door_state[gx, gy] < 0.1:
                 self.player_facing_door = True
@@ -242,7 +244,7 @@ class Game:
         fx = self.player_x + math.cos(self.player_angle) * check
         fy = self.player_y + math.sin(self.player_angle) * check
         gx, gy = int(fx / TILE_SIZE), int(fy / TILE_SIZE)
-        if 0 <= gx < MAP_SIZE_X and 0 <= gy < MAP_SIZE_Y:
+        if 0 <= gx < levels.MAP_SIZE_X and 0 <= gy < levels.MAP_SIZE_Y:
             cell = self.world_map[gx, gy]
             if cell == 3:
                 if self.door_lock[gx, gy] == 0: 
@@ -338,7 +340,7 @@ class Game:
         while not hit:
             if side_dist_x < side_dist_y: side_dist_x += delta_dist_x; map_x += step_x; side = 0
             else: side_dist_y += delta_dist_y; map_y += step_y; side = 1
-            if map_x < 0 or map_x >= MAP_SIZE_X or map_y < 0 or map_y >= MAP_SIZE_Y: return None 
+            if map_x < 0 or map_x >= levels.MAP_SIZE_X or map_y < 0 or map_y >= levels.MAP_SIZE_Y: return None 
             if self.world_map[map_x, map_y] > 0:
                 hit = True
                 if side == 0: hit_dist = side_dist_x - delta_dist_x
@@ -550,8 +552,9 @@ class Game:
                 rect = txt.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT - 120))
                 self.screen.blit(txt, rect)
 
+            # UPDATED: Crosshair now uses the color from settings!
             cx, cy = SCREEN_WIDTH // 2, HALF_HEIGHT
-            g, l = 6, 12; th = 2; c = (200, 200, 200)
+            g, l = 6, 12; th = 2; c = CROSSHAIR_COLOR 
             pygame.draw.line(self.screen, c, (cx, cy-g-l), (cx, cy-g), th)
             pygame.draw.line(self.screen, c, (cx, cy+g), (cx, cy+g+l), th)
             pygame.draw.line(self.screen, c, (cx-g-l, cy), (cx-g, cy), th)

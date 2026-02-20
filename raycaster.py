@@ -2,6 +2,7 @@ import math
 import numpy as np
 from numba import njit
 from settings import *
+from levels import MAP_SIZE_X, MAP_SIZE_Y  # <--- NEW IMPORT ADDED HERE
 
 @njit(fastmath=True)
 def render_kernel(player_x, player_y, player_angle, pitch, world_map, door_state, door_lock, door_dir, wall_textures, floor_texture, ceil_texture, screen_buffer, depth_buffer):
