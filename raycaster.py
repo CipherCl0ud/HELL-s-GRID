@@ -27,7 +27,6 @@ def render_kernel(player_x, player_y, player_angle, pitch, world_map, door_state
             ty = int(floor_y * TEXTURE_SIZE) & (TEXTURE_SIZE - 1)
             
             # 1. Distance Shading (Much darker, faster falloff)
-            # Changed 0.05 to 0.15 for heavy atmosphere
             shade = 1.0 / (1.0 + row_dist * 0.15)
             # Cap maximum brightness lower for dinginess
             shade = min(0.85, shade) 
@@ -89,14 +88,15 @@ def render_kernel(player_x, player_y, player_angle, pitch, world_map, door_state
                 
                 hit_x -= math.floor(hit_x)
 
-                # --- DOOR LOGIC ---
-                if cell == 3 or cell == 4: 
+                # --- FIXED: DOOR LOGIC NOW INCLUDES CELL 6 ---
+                # We use specific OR statements because Numba prefers them over lists/tuples
+                if cell == 3 or cell == 4 or cell == 6: 
                     door_amt = door_state[map_x, map_y]
                     if door_amt >= 0.98: continue 
                     if hit_x + door_amt > 1.0: continue 
                     
                     hit = True; final_dist = perp_dist; wall_x = hit_x + door_amt
-                    tex_id = 3 if cell == 3 else 4
+                    tex_id = cell # Automatically apply the correct texture ID (3, 4, or 6)
                 else:
                     hit = True; final_dist = perp_dist; wall_x = hit_x
                     tex_id = cell

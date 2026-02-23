@@ -84,12 +84,14 @@ class AssetManager:
         def add_texture(index, filename):
             if index < max_textures: self.wall_textures[index] = load_texture(filename)
 
-        # 1=Wall, 2=Mossy, 3=Locked(Switch1), 4=Door(Switch2), 5=Tech
+        # --- WOODEN DOOR REMOVED ---
+        # Both ID 3 and ID 4 now use the Red Switch door!
         add_texture(1, "wall1.png")
         add_texture(2, "wall2.png")
-        add_texture(3, "wall switch1.png") # Locked
-        add_texture(4, "wall switch2.png") # Standard Door
+        add_texture(3, "wall switch1.png") # Locked Door (Red)
+        add_texture(4, "wall switch1.png") # Standard Door (Red)
         add_texture(5, "wall3.png")
+        add_texture(6, "wall switch2.png") # Activated Door (Green)
 
         self.floor_texture = np.ascontiguousarray(load_texture("floor1.png"), dtype=np.int32)
         self.ceil_texture = np.ascontiguousarray(load_texture("floor2.png"), dtype=np.int32)

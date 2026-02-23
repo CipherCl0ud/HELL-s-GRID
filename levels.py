@@ -40,3 +40,13 @@ SPAWN_LOCATIONS = [
     (7.5, 15.5),  
     (18.5, 10.5) 
 ]
+# --- PICKUP DATA ---
+# Item Pickups: (Grid X, Grid Y, Type)
+# Types: 'health', 'ammo', 'armor'
+PICKUP_LOCATIONS = [
+    (12.5, 12.5, 'health'),
+    (5.5, 5.5, 'ammo'),
+    (20.5, 20.5, 'armor'),
+    (18.5, 2.5, 'ammo'),
+    (2.5, 18.5, 'health')
+]
