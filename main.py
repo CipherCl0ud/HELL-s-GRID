@@ -22,7 +22,7 @@ class Game:
         self.assets = assets.AssetManager()
         self.assets.load_all()
 
-        # The green activated door is now natively loaded by assets.py at Map ID 6
+        # The green activated door is natively loaded by assets.py at Map ID 6
         self.green_switch_id = 6
 
         # --- FONT LOADING ---
@@ -30,19 +30,49 @@ class Game:
             font_path = r"Font/FunkyWhimsyRegular-8OlpB.ttf"
             self.custom_ui_font = pygame.font.Font(font_path, 40)
             self.custom_ui_font_small = pygame.font.Font(font_path, 20)
+            self.compass_font = pygame.font.Font(font_path, 32)
         except:
             print("Custom font file not found, falling back to default.")
             self.custom_ui_font = pygame.font.SysFont("Arial", 40)
             self.custom_ui_font_small = pygame.font.SysFont("Arial", 20)
+            self.compass_font = pygame.font.SysFont("Arial", 32, bold=True)
         
-        # Game States
+        # --- GAME STATES & MENUS ---
         self.state = "menu"
+        self.previous_state = "menu" # Tracks where to go "Back" to
+        
         self.menu_selected = 0
         self.menu_options = ["START GAME", "OPTIONS", "EXIT"]
         
-        # Pause Menu State
         self.pause_selected = 0
-        self.pause_options = ["RESUME", "RESTART", "MAIN MENU", "QUIT TO DESKTOP"]
+        self.pause_options = ["RESUME", "OPTIONS", "RESTART", "MAIN MENU", "QUIT TO DESKTOP"]
+        
+        # --- OPTIONS MENU VARIABLES ---
+        self.options_selected = 0
+        self.options_menu = ["MOUSE SENSITIVITY", "CROSSHAIR COLOR", "SHOW FPS", "CONTROLS", "BACK"]
+        
+        # Editable Settings
+        self.mouse_sens = MOUSE_SENSITIVITY
+        self.show_fps = False
+        self.crosshair_colors = [
+            (CROSSHAIR_COLOR, "DEFAULT"), 
+            ((255, 0, 0), "RED"), 
+            ((0, 255, 0), "GREEN"), 
+            ((0, 255, 255), "CYAN"), 
+            ((255, 255, 255), "WHITE"), 
+            ((255, 255, 0), "YELLOW")
+        ]
+        self.crosshair_idx = 0
+
+        # Controls List
+        self.controls_text = [
+            "W, A, S, D - Move",
+            "MOUSE - Look Around",
+            "LEFT CLICK - Fire Weapon",
+            "R - Reload",
+            "E - Interact (Doors/Switches)",
+            "ESC / P - Pause Game"
+        ]
         
         # Loading Vars
         self.loading_phase = 0
@@ -89,33 +119,32 @@ class Game:
             
         self.face_state, self.face_timer, self.player_facing_door = 'center', 0, False
 
+    def get_compass_direction(self):
+        dirs = ["E", "SE", "S", "SW", "W", "NW", "N", "NE"]
+        angle = self.player_angle % (2 * math.pi)
+        idx = int((angle + math.pi/8) / (math.pi/4)) % 8
+        return dirs[idx]
+
+    def reload_weapon(self):
+        if self.ammo < MAX_AMMO and not self.is_reloading:
+            self.is_reloading, self.reload_timer = True, 60
+
+    # --- INPUT HANDLING ---
     def check_input(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT: return False
             if self.state == "menu": self.handle_menu_input(event)
             elif self.state == "game": self.handle_game_input(event)
             elif self.state == "paused": self.handle_pause_input(event)
-            elif self.state == "game_over":
+            elif self.state == "options": self.handle_options_input(event)
+            elif self.state == "controls": self.handle_controls_input(event)
+            elif self.state in ["game_over", "level_complete"]:
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
                     self.reset_game_data(); self.state = "game"
                     pygame.mouse.set_visible(False); pygame.event.set_grab(True)
-                if event.key == pygame.K_ESCAPE: return False
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE: return False
         if self.state == "game": self.handle_movement(); self.handle_shooting()
         return True
-
-    def handle_pause_input(self, event):
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_UP: self.pause_selected = (self.pause_selected - 1) % len(self.pause_options)
-            elif event.key == pygame.K_DOWN: self.pause_selected = (self.pause_selected + 1) % len(self.pause_options)
-            elif event.key == pygame.K_RETURN or event.key == pygame.K_SPACE: self.execute_pause_action()
-            elif event.key == pygame.K_ESCAPE or event.key == pygame.K_p:
-                self.state = "game"; pygame.mouse.set_visible(False); pygame.event.set_grab(True)
-
-    def execute_pause_action(self):
-        if self.pause_selected == 0: self.state = "game"; pygame.mouse.set_visible(False); pygame.event.set_grab(True)
-        elif self.pause_selected == 1: self.reset_game_data(); self.state = "game"; pygame.mouse.set_visible(False); pygame.event.set_grab(True)
-        elif self.pause_selected == 2: self.state = "menu"; pygame.mouse.set_visible(True); pygame.event.set_grab(False)
-        elif self.pause_selected == 3: pygame.quit(); sys.exit()
 
     def handle_menu_input(self, event):
         if event.type == pygame.KEYDOWN:
@@ -132,7 +161,49 @@ class Game:
 
     def execute_menu_action(self):
         if self.menu_selected == 0: self.state, self.loading_phase, self.loading_alpha = "loading", 0, 0
+        elif self.menu_selected == 1: self.state, self.previous_state, self.options_selected = "options", "menu", 0
         elif self.menu_selected == 2: sys.exit()
+
+    def handle_pause_input(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_UP: self.pause_selected = (self.pause_selected - 1) % len(self.pause_options)
+            elif event.key == pygame.K_DOWN: self.pause_selected = (self.pause_selected + 1) % len(self.pause_options)
+            elif event.key == pygame.K_RETURN or event.key == pygame.K_SPACE: self.execute_pause_action()
+            elif event.key == pygame.K_ESCAPE or event.key == pygame.K_p:
+                self.state = "game"; pygame.mouse.set_visible(False); pygame.event.set_grab(True)
+
+    def execute_pause_action(self):
+        if self.pause_selected == 0: self.state = "game"; pygame.mouse.set_visible(False); pygame.event.set_grab(True)
+        elif self.pause_selected == 1: self.state, self.previous_state, self.options_selected = "options", "paused", 0
+        elif self.pause_selected == 2: self.reset_game_data(); self.state = "game"; pygame.mouse.set_visible(False); pygame.event.set_grab(True)
+        elif self.pause_selected == 3: self.state = "menu"; pygame.mouse.set_visible(True); pygame.event.set_grab(False)
+        elif self.pause_selected == 4: pygame.quit(); sys.exit()
+
+    def handle_options_input(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_UP: self.options_selected = (self.options_selected - 1) % len(self.options_menu)
+            elif event.key == pygame.K_DOWN: self.options_selected = (self.options_selected + 1) % len(self.options_menu)
+            elif event.key == pygame.K_LEFT:
+                if self.options_selected == 0: self.mouse_sens = max(0.001, self.mouse_sens - 0.0005)
+                elif self.options_selected == 1: self.crosshair_idx = (self.crosshair_idx - 1) % len(self.crosshair_colors)
+                elif self.options_selected == 2: self.show_fps = not self.show_fps
+            elif event.key == pygame.K_RIGHT:
+                if self.options_selected == 0: self.mouse_sens = min(0.010, self.mouse_sens + 0.0005)
+                elif self.options_selected == 1: self.crosshair_idx = (self.crosshair_idx + 1) % len(self.crosshair_colors)
+                elif self.options_selected == 2: self.show_fps = not self.show_fps
+            elif event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
+                if self.options_selected == 3: self.state = "controls"
+                elif self.options_selected == 4: 
+                    self.state = self.previous_state
+                    if self.state == "game": pygame.mouse.set_visible(False); pygame.event.set_grab(True)
+            elif event.key == pygame.K_ESCAPE:
+                self.state = self.previous_state
+                if self.state == "game": pygame.mouse.set_visible(False); pygame.event.set_grab(True)
+
+    def handle_controls_input(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE or event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
+                self.state = "options"
 
     def handle_game_input(self, event):
         if event.type == pygame.KEYDOWN:
@@ -147,7 +218,8 @@ class Game:
 
     def handle_movement(self):
         mdx, mdy = pygame.mouse.get_rel()
-        self.player_angle += mdx * MOUSE_SENSITIVITY
+        # --- FIXED: USING DYNAMIC MOUSE SENSITIVITY ---
+        self.player_angle += mdx * self.mouse_sens
         self.player_pitch = max(-HALF_HEIGHT, min(HALF_HEIGHT, self.player_pitch - mdy * MOUSE_PITCH_SENSITIVITY))
         keys = pygame.key.get_pressed()
         dx, dy = 0, 0
@@ -173,68 +245,50 @@ class Game:
         
         if 0 <= gx < levels.MAP_SIZE_X and 0 <= gy < levels.MAP_SIZE_Y:
             cell = self.world_map[gx, gy]
-            # Locked Door (Starts Red)
             if cell == 3 and self.door_lock[gx, gy] == 0: 
                 self.door_lock[gx, gy] = 1
-                self.world_map[gx, gy] = self.green_switch_id # Turn Green Instantly
-                self.unlock_timers[(gx, gy)] = pygame.time.get_ticks() + 1000 # Wait 1 second
-            # --- FIXED: Standard Door now waits 1 second too! ---
+                self.world_map[gx, gy] = self.green_switch_id 
+                self.unlock_timers[(gx, gy)] = pygame.time.get_ticks() + 1000 
             elif cell == 4 and self.door_state[gx, gy] < 0.1 and (gx, gy) not in self.unlock_timers: 
-                self.world_map[gx, gy] = self.green_switch_id # Turn Green Instantly
-                self.unlock_timers[(gx, gy)] = pygame.time.get_ticks() + 1000 # Wait 1 second
+                self.world_map[gx, gy] = self.green_switch_id 
+                self.unlock_timers[(gx, gy)] = pygame.time.get_ticks() + 1000 
 
     def update(self):
         if self.state != "game": return
         now = pygame.time.get_ticks()
+
+        # --- WIN CONDITION: Progress North ---
+        if self.player_y < 1.5 * TILE_SIZE:
+            self.state = "level_complete"
+            pygame.mouse.set_visible(True); pygame.event.set_grab(False)
         
         for p in self.pickups:
             if not p['collected'] and math.hypot(self.player_x - p['x'], self.player_y - p['y']) < 75:
-                if p['type'] == 'health' and self.health < MAX_HEALTH:
-                    self.health = min(MAX_HEALTH, self.health + 25)
-                    p['collected'] = True
-                elif p['type'] == 'ammo' and self.ammo < MAX_AMMO:
-                    self.ammo = min(MAX_AMMO, self.ammo + 20)
-                    p['collected'] = True
-                elif p['type'] == 'armor' and self.armor < 100:
-                    self.armor = min(100, self.armor + 25)
-                    p['collected'] = True
+                if p['type'] == 'health' and self.health < MAX_HEALTH: self.health = min(MAX_HEALTH, self.health + 25); p['collected'] = True
+                elif p['type'] == 'ammo' and self.ammo < MAX_AMMO: self.ammo = min(MAX_AMMO, self.ammo + 20); p['collected'] = True
+                elif p['type'] == 'armor' and self.armor < 100: self.armor = min(100, self.armor + 25); p['collected'] = True
         
         # Door automation
-        for k in [k for k, t in self.unlock_timers.items() if now >= t]: 
-            self.active_doors[k] = 'opening'
-            self.unlock_timers.pop(k)
-            
+        for k in [k for k, t in self.unlock_timers.items() if now >= t]: self.active_doors[k], _ = 'opening', self.unlock_timers.pop(k)
         fin = []
         for k, s in self.active_doors.items():
             if s == 'opening': 
                 self.door_state[k] += 0.03
-                if self.door_state[k] >= 1.0: 
-                    self.door_state[k] = 1.0
-                    self.active_doors[k] = 'open'
-                    self.open_timers[k] = now + 5000
+                if self.door_state[k] >= 1.0: self.door_state[k], self.active_doors[k], self.open_timers[k] = 1.0, 'open', now + 5000
             elif s == 'closing': 
                 self.door_state[k] -= 0.03
                 if self.door_state[k] <= 0.0: 
                     self.door_state[k] = 0.0
                     fin.append(k)
-                    
-                    if self.door_lock[k[0], k[1]] == 1:
-                        self.world_map[k[0], k[1]] = 3 # Was a locked door, returns to Red
-                        self.door_lock[k[0], k[1]] = 0
-                    else:
-                        self.world_map[k[0], k[1]] = 4 # Was a standard door, returns to Red
+                    if self.door_lock[k[0], k[1]] == 1: self.world_map[k[0], k[1]], self.door_lock[k[0], k[1]] = 3, 0
+                    else: self.world_map[k[0], k[1]] = 4 
                         
         for k in fin: del self.active_doors[k]
-        for k in [k for k, t in self.open_timers.items() if now >= t and math.hypot(self.player_x-(k[0]+0.5)*TILE_SIZE, self.player_y-(k[1]+0.5)*TILE_SIZE) > TILE_SIZE]: 
-            self.active_doors[k] = 'closing'
-            self.open_timers.pop(k)
+        for k in [k for k, t in self.open_timers.items() if now >= t and math.hypot(self.player_x-(k[0]+0.5)*TILE_SIZE, self.player_y-(k[1]+0.5)*TILE_SIZE) > TILE_SIZE]: self.active_doors[k], _ = 'closing', self.open_timers.pop(k)
         
-        # Hide the "Press E" prompt if the door is already opening/green
         gx, gy = int((self.player_x+math.cos(self.player_angle)*TILE_SIZE*1.0)/TILE_SIZE), int((self.player_y+math.sin(self.player_angle)*TILE_SIZE*1.0)/TILE_SIZE)
-        if 0 <= gx < levels.MAP_SIZE_X and 0 <= gy < levels.MAP_SIZE_Y:
-            self.player_facing_door = (self.world_map[gx, gy] in [3, 4]) and self.door_state[gx, gy] < 0.1
-        else:
-            self.player_facing_door = False
+        if 0 <= gx < levels.MAP_SIZE_X and 0 <= gy < levels.MAP_SIZE_Y: self.player_facing_door = (self.world_map[gx, gy] in [3, 4]) and self.door_state[gx, gy] < 0.1
+        else: self.player_facing_door = False
 
         for e in self.enemies:
             if e['health'] <= 0: continue
@@ -270,6 +324,7 @@ class Game:
             if e['health'] > 0 and (e['x']-self.player_x)*pc + (e['y']-self.player_y)*ps > 0 and abs((e['y']-self.player_y)*pc - (e['x']-self.player_x)*ps) < 30:
                 e['health'] -= 20; e['hit_timer'] = 5; return
 
+    # --- RENDERING ---
     def draw(self):
         if self.state == "menu":
             self.screen.blit(self.assets.images['menu_bg'], (0,0))
@@ -279,6 +334,7 @@ class Game:
                 color = MENU_TEXT_HOVER if i == self.menu_selected else MENU_TEXT_COLOR
                 surf = self.custom_ui_font.render(txt, True, color)
                 self.screen.blit(surf, (SCREEN_WIDTH*(0.25+i*0.25)-surf.get_width()//2, SCREEN_HEIGHT-55))
+        
         elif self.state == "loading":
             self.screen.fill((0,0,0)); img = self.assets.images['loading'].copy(); img.set_alpha(int(self.loading_alpha)); self.screen.blit(img, (0,0))
             if self.loading_phase == 0:
@@ -288,11 +344,19 @@ class Game:
             elif self.loading_phase == 2:
                 self.loading_alpha -= self.fade_speed
                 if self.loading_alpha <= 0: self.reset_game_data(); self.state = "game"; pygame.mouse.set_visible(False); pygame.event.set_grab(True)
-        elif self.state in ["game", "paused", "game_over"]:
+        
+        elif self.state in ["game", "paused", "game_over", "level_complete", "options", "controls"]:
+            # Render World
             raycaster.render_kernel(self.player_x, self.player_y, self.player_angle, self.player_pitch, self.world_map, self.door_state, self.door_lock, self.door_dir, self.assets.wall_textures, self.assets.floor_texture, self.assets.ceil_texture, self.screen_buffer, self.depth_buffer)
             sx, sy = (random.randint(-int(self.screen_shake), int(self.screen_shake)), random.randint(-int(self.screen_shake), int(self.screen_shake))) if self.screen_shake > 0 else (0,0)
             self.screen.blit(pygame.surfarray.make_surface(self.screen_buffer), (sx, sy))
             
+            # Draw Compass
+            if self.state == "game":
+                dir_text = self.get_compass_direction()
+                compass_surf = self.compass_font.render(dir_text, True, (245, 245, 220))
+                self.screen.blit(compass_surf, (25, 25))
+
             pc, ps = math.cos(self.player_angle), math.sin(self.player_angle)
             to_draw = []
             for e in self.enemies:
@@ -348,35 +412,77 @@ class Game:
             fr = pygame.Rect(SCREEN_WIDTH//2-40, SCREEN_HEIGHT-HUD_HEIGHT+10, 80, 80); pygame.draw.rect(self.screen, (0,0,0), fr)
             self.screen.blit(self.assets.faces[self.face_state], (fr.x+8, fr.y+8)); pygame.draw.rect(self.screen, DOOM_BEVEL_LIGHT, fr, 3)
 
+            # Draw Interaction Text
             if self.player_facing_door and self.state == "game":
                 itxt = self.custom_ui_font_small.render("Press E to Open", True, (255, 255, 255))
                 self.screen.blit(itxt, (SCREEN_WIDTH//2 - itxt.get_width()//2, HALF_HEIGHT + 60))
 
-            if self.state == "paused":
-                ov = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT)); ov.set_alpha(200); ov.fill((10, 5, 5)); self.screen.blit(ov, (0,0))
-                ps = self.assets.fonts['death'].render("PAUSED", True, DOOM_RED)
-                self.screen.blit(ps, (SCREEN_WIDTH//2 - ps.get_width()//2, 80))
-                for i, opt in enumerate(self.pause_options):
-                    is_s = (i == self.pause_selected)
-                    clr = MENU_TEXT_HOVER if is_s else (160, 160, 160)
-                    txt = f">  {opt}  <" if is_s else opt
-                    os = self.custom_ui_font.render(txt, True, clr) 
-                    self.screen.blit(os, (SCREEN_WIDTH//2 - os.get_width()//2, 220 + i * 60))
-            
+            # Render Crosshair
             if self.state == "game":
-                c, cx, cy, g, l = CROSSHAIR_COLOR, SCREEN_WIDTH//2, HALF_HEIGHT, 6, 12
+                c = self.crosshair_colors[self.crosshair_idx][0]
+                cx, cy, g, l = SCREEN_WIDTH//2, HALF_HEIGHT, 6, 12
                 pygame.draw.line(self.screen, c, (cx, cy-g-l), (cx, cy-g), 2); pygame.draw.line(self.screen, c, (cx, cy+g), (cx, cy+g+l), 2)
                 pygame.draw.line(self.screen, c, (cx-g-l, cy), (cx-g, cy), 2); pygame.draw.line(self.screen, c, (cx+g, cy), (cx+g+l, cy), 2)
+                
+                # Render FPS if enabled
+                if self.show_fps:
+                    fps_txt = self.custom_ui_font_small.render(f"FPS: {int(self.clock.get_fps())}", True, (0, 255, 0))
+                    self.screen.blit(fps_txt, (SCREEN_WIDTH - 100, 20))
+
+            # Overlays
+            if self.state in ["paused", "options", "controls"]:
+                ov = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT)); ov.set_alpha(200); ov.fill((10, 5, 5)); self.screen.blit(ov, (0,0))
+                
+                if self.state == "paused":
+                    ps = self.assets.fonts['death'].render("PAUSED", True, DOOM_RED)
+                    self.screen.blit(ps, (SCREEN_WIDTH//2 - ps.get_width()//2, 80))
+                    for i, opt in enumerate(self.pause_options):
+                        is_s = (i == self.pause_selected)
+                        clr = MENU_TEXT_HOVER if is_s else (160, 160, 160)
+                        txt = f">  {opt}  <" if is_s else opt
+                        os = self.custom_ui_font.render(txt, True, clr) 
+                        self.screen.blit(os, (SCREEN_WIDTH//2 - os.get_width()//2, 220 + i * 50))
+                
+                elif self.state == "options":
+                    ts = self.assets.fonts['death'].render("OPTIONS", True, DOOM_GOLD)
+                    self.screen.blit(ts, (SCREEN_WIDTH//2 - ts.get_width()//2, 60))
+                    
+                    for i, opt in enumerate(self.options_menu):
+                        is_s = (i == self.options_selected)
+                        clr = MENU_TEXT_HOVER if is_s else (160, 160, 160)
+                        
+                        # Dynamically build the text based on current settings
+                        display_text = opt
+                        if i == 0: display_text += f" < {round(self.mouse_sens, 4)} >"
+                        elif i == 1: display_text += f" < {self.crosshair_colors[self.crosshair_idx][1]} >"
+                        elif i == 2: display_text += f" < {'ON' if self.show_fps else 'OFF'} >"
+                        
+                        txt = f">  {display_text}  <" if is_s else display_text
+                        os = self.custom_ui_font.render(txt, True, clr) 
+                        self.screen.blit(os, (SCREEN_WIDTH//2 - os.get_width()//2, 180 + i * 60))
+
+                elif self.state == "controls":
+                    ts = self.assets.fonts['death'].render("CONTROLS", True, DOOM_GOLD)
+                    self.screen.blit(ts, (SCREEN_WIDTH//2 - ts.get_width()//2, 60))
+                    for i, line in enumerate(self.controls_text):
+                        cs = self.custom_ui_font.render(line, True, (200, 200, 200))
+                        self.screen.blit(cs, (SCREEN_WIDTH//2 - cs.get_width()//2, 160 + i * 45))
+                    bs = self.custom_ui_font_small.render("Press SPACE or ESC to return", True, MENU_TEXT_HOVER)
+                    self.screen.blit(bs, (SCREEN_WIDTH//2 - bs.get_width()//2, SCREEN_HEIGHT - 100))
 
             if self.state == "game_over":
                 ov = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT)); ov.fill((0,0,0)); ov.set_alpha(180); self.screen.blit(ov, (0,0))
                 ds = self.assets.fonts['death'].render("YOU DIED", True, (150,0,0)); self.screen.blit(ds, (SCREEN_WIDTH//2-ds.get_width()//2, HALF_HEIGHT-50))
                 rs = self.assets.fonts['restart'].render("Press SPACE to Restart", True, (200,200,200)); self.screen.blit(rs, (SCREEN_WIDTH//2-rs.get_width()//2, HALF_HEIGHT+50))
 
-        pygame.display.flip()
+            if self.state == "level_complete":
+                ov = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT)); ov.fill((0,0,0)); ov.set_alpha(180); self.screen.blit(ov, (0,0))
+                ds = self.custom_ui_font.render("MISSION ACCOMPLISHED", True, (0, 255, 100))
+                self.screen.blit(ds, (SCREEN_WIDTH//2-ds.get_width()//2, HALF_HEIGHT-50))
+                rs = self.custom_ui_font_small.render("Press SPACE to Play Again", True, (200,200,200))
+                self.screen.blit(rs, (SCREEN_WIDTH//2-rs.get_width()//2, HALF_HEIGHT+50))
 
-    def reload_weapon(self):
-        if self.ammo < MAX_AMMO and not self.is_reloading: self.is_reloading, self.reload_timer = True, 60
+        pygame.display.flip()
 
     def run(self):
         while self.check_input(): self.update(); self.draw(); self.clock.tick(FPS)

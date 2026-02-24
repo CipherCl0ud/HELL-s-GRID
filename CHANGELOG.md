@@ -17,3 +17,19 @@
 
 ### Removed
 - **Bullet Hole Raycasting:** Temporarily removed the wall-hit detection and bullet hole decal rendering to clean up the engine's core loop and improve performance.
+## [Added] - 2026-02-24
+### Navigation & Objectives
+- **Compass HUD:** Integrated a dynamic 8-point compass in the top-left corner to show the player's current facing direction.
+- **Victory Condition:** Reaching the Northernmost sector of the map (`Y < 1.5 * TILE_SIZE`) now triggers a "MISSION ACCOMPLISHED" victory screen.
+
+### UI & Menus
+- **Options Menu:** Added a unified settings menu accessible from both the Main Menu and the in-game Pause screen.
+- **Settings Added:**
+  - Adjustable Mouse Sensitivity slider.
+  - Crosshair Color cycler (Default, Red, Green, Cyan, White, Yellow).
+  - Show/Hide FPS toggle.
+- **Controls Menu:** Added a dedicated sub-menu detailing all in-game keybindings.
+
+### Under the Hood
+- Refactored the state machine in `main.py` to seamlessly track and return to the `previous_state` when exiting menus.
+- Replaced hardcoded `MOUSE_SENSITIVITY` with a dynamic variable tied to the Options menu.
