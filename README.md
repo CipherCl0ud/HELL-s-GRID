@@ -14,9 +14,11 @@
 * **Camera Effects:** Dynamic weapon bobbing and screen shake on impact/firing.
 
 ### **Gameplay & UI**
+* **Campaign Progression:** Multi-level support. Navigate to the Northernmost sector to beat the map and progress to the next stage.
+* **Persistent Save Profiles:** JSON-based profile system (`profiles.json`). The engine automatically saves your Health, Ammo, Armor, and Level progress between stages.
 * **Combat System:** Hitscan weapon mechanics with recoil, muzzle flash animations, and bullet tracers.
 * **Enemy AI:** Sprite-based enemies with basic pathfinding and chase logic.
-* **Interactive World:** Robust sliding door system (Wolfenstein-style) with "locked" and "unlocked" states, plus collectible Health, Armor, and Ammo pickups.
+* **Interactive World:** Robust sliding door system with "locked" and "unlocked" states, plus 2D sprite billboarding for Health, Armor, and Ammo pickups.
 * **Navigation & Objectives:** Dynamic 8-point compass HUD. Reach the Northernmost sector of the grid to secure a "Mission Accomplished" victory.
 * **Dynamic HUD:** Real-time health, ammo, and armor tracking with a reactive status face.
 * **Customizable Settings:** Fully integrated Options menu featuring adjustable mouse sensitivity, crosshair color cycling, and a live FPS toggle.
@@ -28,14 +30,15 @@ You need Python installed, along with the following libraries:
 
 ```bash
 pip install pygame numba numpy
+
 Running the Game
 Navigate to the project directory and run the main entry point:
 
+Bash
+python main.py
 
-*******To Run the game #python main.py
 
-
-#### 🎮 Controls
+🎮 Controls
 W, A, S, D: Move Player
 
 Mouse: Look / Aim
@@ -60,16 +63,16 @@ levels.py - Map data, enemy spawn points, and level configurations.
 settings.py - Global constants, physics settings, and UI colors.
 
 🚀 Roadmap
-[ ] Sound Effects (Gunshots, sliding doors, ambiance)
-
 [x] Pickups (Health, ammo, armor)
 
 [x] Victory Condition (Navigate North)
 
 [x] Options Menu (Phase 1: UI & Sensitivity)
 
+[x] Level Transition & Save Profile System
+
 [ ] Engine Refactor (Phase 2: Dynamic FOV & Resolution Scaling)
 
-[ ] Level 2 Transition System
+[ ] Sound Effects (Gunshots, sliding doors, ambiance)
 
 Created as a Python engine development project.

@@ -33,3 +33,11 @@
 ### Under the Hood
 - Refactored the state machine in `main.py` to seamlessly track and return to the `previous_state` when exiting menus.
 - Replaced hardcoded `MOUSE_SENSITIVITY` with a dynamic variable tied to the Options menu.
+## [Added] - 2026-02-25
+### Core Systems & Progression
+- **Persistent Profile System:** Integrated a JSON-based save system (`profiles.json`). Player stats (Health, Ammo, Armor) and Level progression are now automatically saved upon completing a map.
+- **Level Transitioning:** Built a multi-level array system in `levels.py`. The engine now seamlessly unloads the current map and generates the next level in the sequence when the player reaches the Northern exit zone.
+
+### UI & Menus
+- **Profile Manager:** Overhauled the Main Menu flow. "START GAME" now directs to a Profile Manager allowing players to CONTINUE, create a NEW PROFILE, or DELETE an existing profile.
+- **Custom Text Input:** Built a custom Pygame text-entry loop allowing players to type alphanumeric names for their save files with a blinking retro cursor.
