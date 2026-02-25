@@ -105,13 +105,23 @@ class AssetManager:
             self.enemy_frames = [e1, e2]
         except: self.enemy_frames = [pygame.Surface((10,10)), pygame.Surface((10,10))]
 
-        # HUD / Faces / Decals
+        # HUD / Faces / Decals / Pickups
         try:
             self.images['hole'] = pygame.transform.scale(pygame.image.load(os.path.join(BASE_PATH, "bullethole.png")).convert_alpha(), (30,30))
             self.images['blood'] = pygame.image.load(os.path.join(BASE_PATH, "blood splatter.png")).convert_alpha()
+            
+            # --- NEW PICKUP SPRITES ---
+            self.images['health_pickup'] = pygame.image.load(os.path.join(BASE_PATH, 'Health_pickup.png')).convert_alpha()
+            self.images['ammo_pickup'] = pygame.image.load(os.path.join(BASE_PATH, 'Ammo_pickup.png')).convert_alpha()
+            self.images['armor_pickup'] = pygame.image.load(os.path.join(BASE_PATH, 'Armor_pickup.png')).convert_alpha()
+            
         except: 
             self.images['hole'] = pygame.Surface((10,10))
             self.images['blood'] = pygame.Surface((10,10))
+            # Fallback surfaces in case the images are missing
+            self.images['health_pickup'] = pygame.Surface((32, 32))
+            self.images['ammo_pickup'] = pygame.Surface((32, 32))
+            self.images['armor_pickup'] = pygame.Surface((32, 32))
 
         for name, f in [('center','face.png'), ('left','face_left.png'), ('right','face_right.png')]:
             try: self.faces[name] = pygame.transform.scale(pygame.image.load(os.path.join(BASE_PATH, f)).convert_alpha(), (64,64))

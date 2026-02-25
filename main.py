@@ -3,6 +3,8 @@ import math
 import numpy as np
 import random
 import sys
+import json  # For saving/loading profiles
+import os    # To check if the save file exists
 
 # Import our custom modules
 from settings import *
@@ -39,11 +41,23 @@ class Game:
         
         # --- GAME STATES & MENUS ---
         self.state = "menu"
-        self.previous_state = "menu" # Tracks where to go "Back" to
+        self.previous_state = "menu" 
         
         self.menu_selected = 0
         self.menu_options = ["START GAME", "OPTIONS", "EXIT"]
         
+        # --- PROFILE SYSTEM ---
+        self.save_file = "profiles.json"
+        self.profiles = self.load_profiles()
+        self.active_profile = None
+        self.typing_name = ""
+        
+        self.profile_action_selected = 0
+        self.profile_action_options = ["CONTINUE", "NEW PROFILE", "DELETE PROFILE", "BACK"]
+        
+        self.profile_list_selected = 0
+        self.profile_list_mode = "continue" # Can be "continue" or "delete"
+
         self.pause_selected = 0
         self.pause_options = ["RESUME", "OPTIONS", "RESTART", "MAIN MENU", "QUIT TO DESKTOP"]
         
@@ -80,31 +94,65 @@ class Game:
         self.loading_timer = 0
         self.fade_speed = 5
 
-        self.init_map()
         self.reset_game_data()
         
         self.screen_buffer = np.zeros((SCREEN_WIDTH, SCREEN_HEIGHT, 3), dtype=np.int32)
         self.depth_buffer = np.zeros(SCREEN_WIDTH, dtype=np.float32)
 
+    # --- JSON SAVE SYSTEM ---
+    def load_profiles(self):
+        if os.path.exists(self.save_file):
+            try:
+                with open(self.save_file, "r") as f:
+                    return json.load(f)
+            except:
+                return {}
+        return {}
+
+    def save_profiles(self):
+        with open(self.save_file, "w") as f:
+            json.dump(self.profiles, f, indent=4)
+
+    # --- LEVEL INIT & RESET ---
     def init_map(self):
-        self.world_map = np.zeros((levels.MAP_SIZE_X, levels.MAP_SIZE_Y), dtype=np.int32)
-        self.door_state = np.zeros((levels.MAP_SIZE_X, levels.MAP_SIZE_Y), dtype=np.float32) 
-        self.door_lock = np.zeros((levels.MAP_SIZE_X, levels.MAP_SIZE_Y), dtype=np.int32)
-        self.door_dir = np.zeros((levels.MAP_SIZE_X, levels.MAP_SIZE_Y), dtype=np.int32) 
+        lvl = levels.LEVELS[self.current_level]
+        self.map_size_x = lvl['MAP_SIZE_X']
+        self.map_size_y = lvl['MAP_SIZE_Y']
         
-        for j, char in enumerate(levels.MAP_STRING):
-            x, y = j % levels.MAP_SIZE_X, j // levels.MAP_SIZE_X
+        self.world_map = np.zeros((self.map_size_x, self.map_size_y), dtype=np.int32)
+        self.door_state = np.zeros((self.map_size_x, self.map_size_y), dtype=np.float32) 
+        self.door_lock = np.zeros((self.map_size_x, self.map_size_y), dtype=np.int32)
+        self.door_dir = np.zeros((self.map_size_x, self.map_size_y), dtype=np.int32) 
+        
+        for j, char in enumerate(lvl['MAP_STRING']):
+            x, y = j % self.map_size_x, j // self.map_size_x
             val = int(char)
             self.world_map[x, y] = val
             if val in [3, 4]:
                 left = self.world_map[x-1, y] if x > 0 else 0
-                right = self.world_map[x+1, y] if x < levels.MAP_SIZE_X-1 else 0
+                right = self.world_map[x+1, y] if x < self.map_size_x-1 else 0
                 self.door_dir[x, y] = 1 if (left != 0 and right != 0) else 0
 
     def reset_game_data(self):
-        self.player_x, self.player_y = 2.5 * TILE_SIZE, 22.5 * TILE_SIZE
+        # 1. Load from profile if active, otherwise set defaults
+        if self.active_profile and self.active_profile in self.profiles:
+            p_data = self.profiles[self.active_profile]
+            self.current_level = p_data["level"]
+            self.health = p_data["health"]
+            self.ammo = p_data["ammo"]
+            self.armor = p_data["armor"]
+        else:
+            self.current_level = 0
+            self.health, self.ammo, self.armor = MAX_HEALTH, MAX_AMMO, 0
+            
+        # 2. Build the map layout for the current level
+        self.init_map()
+        
+        # 3. Spawn the player dynamically based on the map size
+        self.player_x, self.player_y = 2.5 * TILE_SIZE, (self.map_size_y - 1.5) * TILE_SIZE
         self.player_angle, self.player_pitch = -math.pi / 2, 0.0
-        self.health, self.ammo, self.armor = MAX_HEALTH, MAX_AMMO, 0
+        
+        # 4. Reset temporary game stats
         self.weapon_recoil, self.weapon_bob, self.screen_shake = 0.0, 0.0, 0.0
         self.damage_flash, self.muzzle_timer, self.last_shot = 0.0, 0, 0
         self.is_reloading, self.reload_timer = False, 0
@@ -112,9 +160,11 @@ class Game:
         
         self.tracers, self.enemies, self.pickups = [], [], []
         
-        for sx, sy in levels.SPAWN_LOCATIONS:
+        # Load entities from the current level
+        lvl = levels.LEVELS[self.current_level]
+        for sx, sy in lvl['SPAWN_LOCATIONS']:
             self.enemies.append({'x': sx * TILE_SIZE, 'y': sy * TILE_SIZE, 'health': ENEMY_HEALTH, 'state': 'chase', 'frame': 0, 'anim_timer': 0, 'hit_timer': 0})
-        for px, py, pt in levels.PICKUP_LOCATIONS:
+        for px, py, pt in lvl['PICKUP_LOCATIONS']:
             self.pickups.append({'x': px * TILE_SIZE, 'y': py * TILE_SIZE, 'type': pt, 'collected': False})
             
         self.face_state, self.face_timer, self.player_facing_door = 'center', 0, False
@@ -134,15 +184,39 @@ class Game:
         for event in pygame.event.get():
             if event.type == pygame.QUIT: return False
             if self.state == "menu": self.handle_menu_input(event)
+            elif self.state == "profile_action_menu": self.handle_profile_action_input(event)
+            elif self.state == "profile_select": self.handle_profile_select_input(event)
+            elif self.state == "profile_create": self.handle_profile_create_input(event)
             elif self.state == "game": self.handle_game_input(event)
             elif self.state == "paused": self.handle_pause_input(event)
             elif self.state == "options": self.handle_options_input(event)
             elif self.state == "controls": self.handle_controls_input(event)
+            
+            # --- LEVEL TRANSITION & SAVE HOOK ---
             elif self.state in ["game_over", "level_complete"]:
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
-                    self.reset_game_data(); self.state = "game"
+                    if self.state == "level_complete":
+                        next_level = self.current_level + 1
+                        if next_level >= len(levels.LEVELS):
+                            self.current_level = 0
+                            self.state = "menu"
+                            pygame.mouse.set_visible(True); pygame.event.set_grab(False)
+                            return True
+                        
+                        # OVERWRITE PROFILE WITH NEW STATS AND NEXT LEVEL
+                        if self.active_profile:
+                            self.profiles[self.active_profile]["level"] = next_level
+                            self.profiles[self.active_profile]["health"] = self.health
+                            self.profiles[self.active_profile]["ammo"] = self.ammo
+                            self.profiles[self.active_profile]["armor"] = self.armor
+                            self.save_profiles()
+                    
+                    # Restart map or load next map (pulling from profile)
+                    self.reset_game_data()
+                    self.state = "game"
                     pygame.mouse.set_visible(False); pygame.event.set_grab(True)
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE: return False
+                
         if self.state == "game": self.handle_movement(); self.handle_shooting()
         return True
 
@@ -160,9 +234,74 @@ class Game:
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1: self.execute_menu_action()
 
     def execute_menu_action(self):
-        if self.menu_selected == 0: self.state, self.loading_phase, self.loading_alpha = "loading", 0, 0
+        if self.menu_selected == 0: 
+            self.state = "profile_action_menu" # Route to the profile menu!
+            self.profile_action_selected = 0
         elif self.menu_selected == 1: self.state, self.previous_state, self.options_selected = "options", "menu", 0
         elif self.menu_selected == 2: sys.exit()
+
+    # --- PROFILE MENU INPUTS ---
+    def handle_profile_action_input(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_UP: self.profile_action_selected = (self.profile_action_selected - 1) % len(self.profile_action_options)
+            elif event.key == pygame.K_DOWN: self.profile_action_selected = (self.profile_action_selected + 1) % len(self.profile_action_options)
+            elif event.key in [pygame.K_RETURN, pygame.K_SPACE]:
+                
+                # CONTINUE
+                if self.profile_action_selected == 0:
+                    if not self.profiles: return 
+                    self.state, self.profile_list_mode, self.profile_list_selected = "profile_select", "continue", 0
+                # NEW PROFILE
+                elif self.profile_action_selected == 1:
+                    self.state, self.typing_name = "profile_create", ""
+                # DELETE
+                elif self.profile_action_selected == 2:
+                    if not self.profiles: return
+                    self.state, self.profile_list_mode, self.profile_list_selected = "profile_select", "delete", 0
+                # BACK
+                elif self.profile_action_selected == 3:
+                    self.state = "menu"
+            elif event.key == pygame.K_ESCAPE: self.state = "menu"
+
+    def handle_profile_select_input(self, event):
+        profiles_list = list(self.profiles.keys())
+        if not profiles_list:
+            self.state = "profile_action_menu"
+            return
+            
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_UP: self.profile_list_selected = (self.profile_list_selected - 1) % len(profiles_list)
+            elif event.key == pygame.K_DOWN: self.profile_list_selected = (self.profile_list_selected + 1) % len(profiles_list)
+            elif event.key in [pygame.K_RETURN, pygame.K_SPACE]:
+                selected_name = profiles_list[self.profile_list_selected]
+                
+                if self.profile_list_mode == "continue":
+                    self.active_profile = selected_name
+                    self.state, self.loading_phase, self.loading_alpha = "loading", 0, 0
+                elif self.profile_list_mode == "delete":
+                    del self.profiles[selected_name]
+                    self.save_profiles()
+                    if not self.profiles: self.state = "profile_action_menu"
+                    else: self.profile_list_selected = 0
+            elif event.key == pygame.K_ESCAPE: self.state = "profile_action_menu"
+
+    def handle_profile_create_input(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                self.state = "profile_action_menu"
+            elif event.key == pygame.K_RETURN:
+                if len(self.typing_name) > 0:
+                    # Create a brand new default profile
+                    self.profiles[self.typing_name] = {"level": 0, "health": MAX_HEALTH, "ammo": MAX_AMMO, "armor": 0}
+                    self.save_profiles()
+                    self.active_profile = self.typing_name
+                    self.state, self.loading_phase, self.loading_alpha = "loading", 0, 0
+            elif event.key == pygame.K_BACKSPACE:
+                self.typing_name = self.typing_name[:-1]
+            else:
+                # Capture alphanumeric characters (up to 12)
+                if event.unicode.isalnum() and len(self.typing_name) < 12:
+                    self.typing_name += event.unicode.upper()
 
     def handle_pause_input(self, event):
         if event.type == pygame.KEYDOWN:
@@ -218,7 +357,6 @@ class Game:
 
     def handle_movement(self):
         mdx, mdy = pygame.mouse.get_rel()
-        # --- FIXED: USING DYNAMIC MOUSE SENSITIVITY ---
         self.player_angle += mdx * self.mouse_sens
         self.player_pitch = max(-HALF_HEIGHT, min(HALF_HEIGHT, self.player_pitch - mdy * MOUSE_PITCH_SENSITIVITY))
         keys = pygame.key.get_pressed()
@@ -234,7 +372,7 @@ class Game:
         else: self.weapon_bob = 0.0
 
     def is_solid(self, x, y):
-        if x < 0 or x >= levels.MAP_SIZE_X or y < 0 or y >= levels.MAP_SIZE_Y: return True
+        if x < 0 or x >= self.map_size_x or y < 0 or y >= self.map_size_y: return True
         cell = self.world_map[x, y]
         return cell != 0 and not ((cell in [3, 4, self.green_switch_id]) and self.door_state[x, y] > 0.8)
 
@@ -243,7 +381,7 @@ class Game:
         gx = int((self.player_x + math.cos(self.player_angle) * check_dist) / TILE_SIZE)
         gy = int((self.player_y + math.sin(self.player_angle) * check_dist) / TILE_SIZE)
         
-        if 0 <= gx < levels.MAP_SIZE_X and 0 <= gy < levels.MAP_SIZE_Y:
+        if 0 <= gx < self.map_size_x and 0 <= gy < self.map_size_y:
             cell = self.world_map[gx, gy]
             if cell == 3 and self.door_lock[gx, gy] == 0: 
                 self.door_lock[gx, gy] = 1
@@ -287,7 +425,7 @@ class Game:
         for k in [k for k, t in self.open_timers.items() if now >= t and math.hypot(self.player_x-(k[0]+0.5)*TILE_SIZE, self.player_y-(k[1]+0.5)*TILE_SIZE) > TILE_SIZE]: self.active_doors[k], _ = 'closing', self.open_timers.pop(k)
         
         gx, gy = int((self.player_x+math.cos(self.player_angle)*TILE_SIZE*1.0)/TILE_SIZE), int((self.player_y+math.sin(self.player_angle)*TILE_SIZE*1.0)/TILE_SIZE)
-        if 0 <= gx < levels.MAP_SIZE_X and 0 <= gy < levels.MAP_SIZE_Y: self.player_facing_door = (self.world_map[gx, gy] in [3, 4]) and self.door_state[gx, gy] < 0.1
+        if 0 <= gx < self.map_size_x and 0 <= gy < self.map_size_y: self.player_facing_door = (self.world_map[gx, gy] in [3, 4]) and self.door_state[gx, gy] < 0.1
         else: self.player_facing_door = False
 
         for e in self.enemies:
@@ -335,6 +473,47 @@ class Game:
                 surf = self.custom_ui_font.render(txt, True, color)
                 self.screen.blit(surf, (SCREEN_WIDTH*(0.25+i*0.25)-surf.get_width()//2, SCREEN_HEIGHT-55))
         
+        elif self.state in ["profile_action_menu", "profile_select", "profile_create"]:
+            self.screen.blit(self.assets.images['menu_bg'], (0,0))
+            ov = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT)); ov.fill((0,0,0)); ov.set_alpha(150); self.screen.blit(ov, (0,0))
+            
+            if self.state == "profile_action_menu":
+                ts = self.assets.fonts['death'].render("PROFILES", True, DOOM_GOLD)
+                self.screen.blit(ts, (SCREEN_WIDTH//2 - ts.get_width()//2, 80))
+                for i, txt in enumerate(self.profile_action_options):
+                    # Gray out CONTINUE and DELETE if no profiles exist
+                    if (txt == "CONTINUE" or txt == "DELETE PROFILE") and not self.profiles:
+                        color = (100, 100, 100) 
+                    else:
+                        color = MENU_TEXT_HOVER if i == self.profile_action_selected else (160, 160, 160)
+                    surf = self.custom_ui_font.render(f">  {txt}  <" if i == self.profile_action_selected else txt, True, color)
+                    self.screen.blit(surf, (SCREEN_WIDTH//2 - surf.get_width()//2, 220 + i * 60))
+            
+            elif self.state == "profile_select":
+                title = "SELECT PROFILE" if self.profile_list_mode == "continue" else "DELETE PROFILE"
+                ts = self.assets.fonts['death'].render(title, True, DOOM_GOLD if self.profile_list_mode == "continue" else DOOM_RED)
+                self.screen.blit(ts, (SCREEN_WIDTH//2 - ts.get_width()//2, 80))
+                
+                profiles_list = list(self.profiles.keys())
+                for i, name in enumerate(profiles_list):
+                    color = MENU_TEXT_HOVER if i == self.profile_list_selected else (160, 160, 160)
+                    p_data = self.profiles[name]
+                    txt = f"{name} - LVL {p_data['level']+1}"
+                    txt = f">  {txt}  <" if i == self.profile_list_selected else txt
+                    surf = self.custom_ui_font.render(txt, True, color)
+                    self.screen.blit(surf, (SCREEN_WIDTH//2 - surf.get_width()//2, 220 + i * 50))
+            
+            elif self.state == "profile_create":
+                ts = self.assets.fonts['death'].render("NEW PROFILE", True, DOOM_GOLD)
+                self.screen.blit(ts, (SCREEN_WIDTH//2 - ts.get_width()//2, 80))
+                prompt = self.custom_ui_font.render("ENTER NAME:", True, (200, 200, 200))
+                self.screen.blit(prompt, (SCREEN_WIDTH//2 - prompt.get_width()//2, 250))
+                
+                # Blinking cursor effect
+                cursor = "_" if pygame.time.get_ticks() % 1000 < 500 else ""
+                name_surf = self.custom_ui_font.render(self.typing_name + cursor, True, DOOM_RED)
+                self.screen.blit(name_surf, (SCREEN_WIDTH//2 - name_surf.get_width()//2, 320))
+
         elif self.state == "loading":
             self.screen.fill((0,0,0)); img = self.assets.images['loading'].copy(); img.set_alpha(int(self.loading_alpha)); self.screen.blit(img, (0,0))
             if self.loading_phase == 0:
@@ -343,7 +522,11 @@ class Game:
             elif self.loading_phase == 1 and pygame.time.get_ticks() - self.loading_timer > 2000: self.loading_phase = 2
             elif self.loading_phase == 2:
                 self.loading_alpha -= self.fade_speed
-                if self.loading_alpha <= 0: self.reset_game_data(); self.state = "game"; pygame.mouse.set_visible(False); pygame.event.set_grab(True)
+                if self.loading_alpha <= 0: 
+                    self.reset_game_data()
+                    self.state = "game"
+                    pygame.mouse.set_visible(False)
+                    pygame.event.set_grab(True)
         
         elif self.state in ["game", "paused", "game_over", "level_complete", "options", "controls"]:
             # Render World
@@ -378,12 +561,12 @@ class Game:
                         tex = self.assets.enemy_frames[obj['frame']]
                         sw, sh = int(scale*0.7*(tex.get_width()/tex.get_height())), int(scale*0.7)
                         self.screen.blit(pygame.transform.scale(tex, (sw, sh)), (scx-sw//2+sx, scy-sh+sy))
+                    
+                    # --- SPRITE PICKUP RENDERING ---
                     else:
-                        if obj['type'] == 'health': cl = (255, 0, 0)
-                        elif obj['type'] == 'armor': cl = (0, 0, 255)
-                        else: cl = (0, 255, 0)
-                        pygame.draw.circle(self.screen, cl, (scx+sx, scy-int(scale*0.2)+sy), int(scale*0.15))
-                        pygame.draw.circle(self.screen, (255, 255, 255), (scx+sx, scy-int(scale*0.2)+sy), max(1, int(scale*0.05)))
+                        sprite = self.assets.images[f"{obj['type']}_pickup"]
+                        pw, ph = int(scale * 0.4), int(scale * 0.4)
+                        self.screen.blit(pygame.transform.scale(sprite, (pw, ph)), (scx - pw//2 + sx, scy - ph//2 + sy))
 
             if self.damage_flash > 0:
                 f = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT)); f.fill((255,0,0)); f.set_alpha(int(self.damage_flash)); self.screen.blit(f, (0,0))
@@ -479,7 +662,10 @@ class Game:
                 ov = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT)); ov.fill((0,0,0)); ov.set_alpha(180); self.screen.blit(ov, (0,0))
                 ds = self.custom_ui_font.render("MISSION ACCOMPLISHED", True, (0, 255, 100))
                 self.screen.blit(ds, (SCREEN_WIDTH//2-ds.get_width()//2, HALF_HEIGHT-50))
-                rs = self.custom_ui_font_small.render("Press SPACE to Play Again", True, (200,200,200))
+                
+                # Check if there are more levels to change the spacebar text
+                msg = "Press SPACE to Continue" if self.current_level < len(levels.LEVELS) - 1 else "Press SPACE to Finish"
+                rs = self.custom_ui_font_small.render(msg, True, (200,200,200))
                 self.screen.blit(rs, (SCREEN_WIDTH//2-rs.get_width()//2, HALF_HEIGHT+50))
 
         pygame.display.flip()
